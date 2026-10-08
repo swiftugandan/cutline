@@ -1,0 +1,569 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cutline:schema:design:v1",
+  "title": "Cutline design",
+  "type": "object",
+  "description": "A car headlamp design. Lengths are millimetres, angles degrees and flux lumens; the mounting height is metres. Cross-field rules are listed in docs/SCHEMA.md and checked by the loader.",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "id",
+    "title",
+    "notes",
+    "beamClass",
+    "traffic",
+    "cutoff",
+    "led",
+    "optics",
+    "cover",
+    "mounting",
+    "simulation"
+  ],
+  "properties": {
+    "format": {
+      "const": "cutline.design"
+    },
+    "version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Identifier"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "Title"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "Notes"
+    },
+    "beamClass": {
+      "enum": [
+        "C",
+        "V",
+        "B",
+        "A"
+      ],
+      "description": "Beam class. UN R149 01 series: passing-beam Class C is a normal car low beam, Class V a lower-output one; driving-beam Class B (HR) is a normal car high beam, Class A (R) a lower one"
+    },
+    "traffic": {
+      "enum": [
+        "right",
+        "left"
+      ],
+      "description": "Traffic. The side of the road vehicles drive on"
+    },
+    "cutoff": {
+      "type": "object",
+      "description": "Cut-off",
+      "additionalProperties": false,
+      "required": [
+        "verticalDeg",
+        "elbowDeg",
+        "riseDeg",
+        "riseHeightDeg",
+        "aimMethod"
+      ],
+      "properties": {
+        "verticalDeg": {
+          "type": "number",
+          "description": "Horizontal part (°). Vertical angle of the flat part of the cut-off; negative is below the horizon. R149 aims it to 0.57° down (line B). Ignored for a driving beam",
+          "minimum": -5,
+          "maximum": 5
+        },
+        "elbowDeg": {
+          "type": "number",
+          "description": "Elbow (°). Horizontal angle where the cut-off starts to rise towards the kerb",
+          "minimum": -10,
+          "maximum": 10
+        },
+        "riseDeg": {
+          "type": "number",
+          "description": "Rise angle (°). Slope of the rising part. 15° is common practice; R149 itself does not prescribe it",
+          "minimum": 0,
+          "maximum": 60
+        },
+        "riseHeightDeg": {
+          "type": "number",
+          "description": "Rise height (°). How far the rising part climbs",
+          "minimum": 0,
+          "maximum": 5
+        },
+        "aimMethod": {
+          "enum": [
+            "line02D",
+            "threeLine"
+          ],
+          "description": "Horizontal aim. How the approval lab aims the beam sideways (R149 Annex 6 §2.3.2.1). The applicant chooses: the 0.2°D line puts the rising edge on line A at 0.5°R; three lines fit the rising edge and put its meeting with line B on V-V"
+        }
+      }
+    },
+    "led": {
+      "type": "object",
+      "description": "LED",
+      "additionalProperties": false,
+      "required": [
+        "flux",
+        "width",
+        "height",
+        "offset"
+      ],
+      "properties": {
+        "flux": {
+          "type": "number",
+          "description": "Luminous flux (lm). Hot operating flux at the junction temperature in the lamp, not the datasheet value at 25 °C",
+          "minimum": 10,
+          "maximum": 10000
+        },
+        "width": {
+          "type": "number",
+          "description": "Emitter width (mm)",
+          "minimum": 0.1,
+          "maximum": 20
+        },
+        "height": {
+          "type": "number",
+          "description": "Emitter length (mm). Along the beam axis",
+          "minimum": 0.1,
+          "maximum": 20
+        },
+        "offset": {
+          "type": "number",
+          "description": "Offset along the axis (mm). Moves the LED forwards (positive) or back from the reflector's focus. In a projector, a chip just behind the focus images above the shield edge, so less light is lost on the shield",
+          "minimum": -20,
+          "maximum": 20
+        }
+      }
+    },
+    "optics": {
+      "description": "Optics",
+      "oneOf": [
+        {
+          "type": "object",
+          "description": "LED projector module",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "reflector",
+            "shield",
+            "lens"
+          ],
+          "properties": {
+            "type": {
+              "const": "projector"
+            },
+            "reflector": {
+              "type": "object",
+              "description": "Ellipsoidal reflector",
+              "additionalProperties": false,
+              "required": [
+                "focalDistance",
+                "semiMajor",
+                "widthRatio",
+                "frontCut",
+                "reflectance",
+                "slopeErrorMrad"
+              ],
+              "properties": {
+                "focalDistance": {
+                  "type": "number",
+                  "description": "Distance between foci (mm). From the LED (first focus) to the shield edge (second focus)",
+                  "minimum": 5,
+                  "maximum": 200
+                },
+                "semiMajor": {
+                  "type": "number",
+                  "description": "Semi-major axis (mm). Half the reflector length along the beam; must exceed half the distance between foci",
+                  "minimum": 3,
+                  "maximum": 200
+                },
+                "widthRatio": {
+                  "type": "number",
+                  "description": "Width ratio. Horizontal over vertical semi-axis. Above 1 spreads the beam sideways",
+                  "minimum": 0.5,
+                  "maximum": 3
+                },
+                "frontCut": {
+                  "type": "number",
+                  "description": "Front edge (mm). Where the reflector ends, measured forwards from the LED",
+                  "minimum": 0,
+                  "maximum": 200
+                },
+                "reflectance": {
+                  "type": "number",
+                  "description": "Reflectance. Vacuum-aluminised reflectors reach about 0.85–0.90",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "slopeErrorMrad": {
+                  "type": "number",
+                  "description": "Slope error (mrad)",
+                  "minimum": 0,
+                  "maximum": 30
+                }
+              }
+            },
+            "shield": {
+              "type": "object",
+              "description": "Cut-off shield",
+              "additionalProperties": false,
+              "required": [
+                "lowering",
+                "width",
+                "curvature",
+                "windowWidth",
+                "windowHeight",
+                "windowDepth"
+              ],
+              "properties": {
+                "lowering": {
+                  "type": "number",
+                  "description": "Edge offset (mm). Moves the shield edge up (positive) or down at the second focus",
+                  "minimum": -5,
+                  "maximum": 5
+                },
+                "width": {
+                  "type": "number",
+                  "description": "Shield width (mm)",
+                  "minimum": 5,
+                  "maximum": 200
+                },
+                "curvature": {
+                  "type": "number",
+                  "description": "Curvature (1/mm). Bends the shield towards the lens at its ends (z = κx²), following the lens's curved field. Sharpens the cut-off far to the sides",
+                  "minimum": -0.05,
+                  "maximum": 0.05
+                },
+                "windowWidth": {
+                  "type": "number",
+                  "description": "Overhead window width (mm). A slot below the shield edge that lets a little light through above the cut-off, for overhead signs. 0 for none",
+                  "minimum": 0,
+                  "maximum": 80
+                },
+                "windowHeight": {
+                  "type": "number",
+                  "description": "Overhead window height (mm)",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "windowDepth": {
+                  "type": "number",
+                  "description": "Overhead window depth (mm). How far below the edge the top of the window sits; deeper sends its light higher",
+                  "minimum": 0,
+                  "maximum": 15
+                }
+              }
+            },
+            "lens": {
+              "type": "object",
+              "description": "Aspheric lens",
+              "additionalProperties": false,
+              "required": [
+                "diameter",
+                "thickness",
+                "radius",
+                "conic",
+                "a4",
+                "refractiveIndex",
+                "textureDeg",
+                "signLightHeight",
+                "signLightMinDeg",
+                "signLightMaxDeg",
+                "abbe",
+                "defocus"
+              ],
+              "properties": {
+                "diameter": {
+                  "type": "number",
+                  "description": "Diameter (mm)",
+                  "minimum": 10,
+                  "maximum": 200
+                },
+                "thickness": {
+                  "type": "number",
+                  "description": "Centre thickness (mm)",
+                  "minimum": 2,
+                  "maximum": 60
+                },
+                "radius": {
+                  "type": "number",
+                  "description": "Front radius (mm)",
+                  "minimum": 5,
+                  "maximum": 500
+                },
+                "conic": {
+                  "type": "number",
+                  "description": "Conic constant. About −1/n² removes spherical aberration for a distant object",
+                  "minimum": -5,
+                  "maximum": 5
+                },
+                "a4": {
+                  "type": "number",
+                  "description": "Fourth-order term (1/mm³)",
+                  "minimum": -0.01,
+                  "maximum": 0.01
+                },
+                "refractiveIndex": {
+                  "type": "number",
+                  "description": "Refractive index. At 587.6 nm. PMMA 1.49, polycarbonate 1.585, glass about 1.52",
+                  "minimum": 1.3,
+                  "maximum": 2
+                },
+                "textureDeg": {
+                  "type": "number",
+                  "description": "Surface texture (°). The scale of a fine texture on the front face that scatters the light: half of it turns by less than about 0.77 times this angle, with a thin tail turning further. Makers use texture to tune cut-off sharpness and hide colour fringes",
+                  "minimum": 0,
+                  "maximum": 2
+                },
+                "signLightHeight": {
+                  "type": "number",
+                  "description": "Sign-light strip (mm). Height of a strip along the bottom of the lens that turns its light upwards onto overhead signs. 0 for none",
+                  "minimum": 0,
+                  "maximum": 20
+                },
+                "signLightMinDeg": {
+                  "type": "number",
+                  "description": "Sign light from (°). Smallest upward turn the strip gives",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "signLightMaxDeg": {
+                  "type": "number",
+                  "description": "Sign light to (°). Largest upward turn the strip gives",
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "abbe": {
+                  "type": "number",
+                  "description": "Abbe number. Lower numbers spread colours more, softening the cut-off with a coloured fringe. PMMA about 57, polycarbonate about 30",
+                  "minimum": 15,
+                  "maximum": 100
+                },
+                "defocus": {
+                  "type": "number",
+                  "description": "Defocus (mm). Moves the lens away from (positive) or towards the shield. Softens the cut-off",
+                  "minimum": -10,
+                  "maximum": 10
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "description": "LED multi-facet reflector",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "focalLength",
+            "width",
+            "height",
+            "columns",
+            "rows",
+            "spreadDeg",
+            "fanPower",
+            "dropDeg",
+            "rowDropDeg",
+            "wingDropDeg",
+            "kickColumns",
+            "facetSpreadDeg",
+            "overheadFacets",
+            "overheadHeight",
+            "overheadDeg",
+            "reflectance",
+            "slopeErrorMrad"
+          ],
+          "properties": {
+            "type": {
+              "const": "reflector"
+            },
+            "focalLength": {
+              "type": "number",
+              "description": "Focal length (mm)",
+              "minimum": 3,
+              "maximum": 100
+            },
+            "width": {
+              "type": "number",
+              "description": "Reflector width (mm)",
+              "minimum": 20,
+              "maximum": 400
+            },
+            "height": {
+              "type": "number",
+              "description": "Reflector height (mm). Above the LED, which faces up into the reflector",
+              "minimum": 10,
+              "maximum": 200
+            },
+            "columns": {
+              "type": "integer",
+              "description": "Facet columns",
+              "minimum": 1,
+              "maximum": 16
+            },
+            "rows": {
+              "type": "integer",
+              "description": "Facet rows",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "spreadDeg": {
+              "type": "number",
+              "description": "Horizontal spread (°). Half-width of the fan of facet aims across the road",
+              "minimum": 0,
+              "maximum": 45
+            },
+            "fanPower": {
+              "type": "number",
+              "description": "Fan concentration. How the facet columns share out across the spread: 1 spaces them evenly, higher values gather them towards the centre for a brighter hot spot",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "dropDeg": {
+              "type": "number",
+              "description": "Image margin below the cut-off (°). Extra downward aim, so each chip image sits under the cut-off",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "rowDropDeg": {
+              "type": "number",
+              "description": "Row drop (°). Extra downward aim for the bottom row, shared out evenly up to none for the top row. Lower rows form larger images, suited to the foreground",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "wingDropDeg": {
+              "type": "number",
+              "description": "Wing drop (°). Extra downward aim for the columns aimed widest, growing with how far out they point. It lights the road edges close to the car",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "kickColumns": {
+              "type": "integer",
+              "description": "Elbow columns. Columns on the kerb side aimed up the rising part of the cut-off",
+              "minimum": 0,
+              "maximum": 8
+            },
+            "facetSpreadDeg": {
+              "type": "number",
+              "description": "Facet spread (°). Each facet is curved sideways to smear its image across about this half-angle, smoothing the pattern",
+              "minimum": 0,
+              "maximum": 30
+            },
+            "overheadFacets": {
+              "type": "integer",
+              "description": "Sign-light columns. Central facet columns whose bottom strip lights overhead signs",
+              "minimum": 0,
+              "maximum": 8
+            },
+            "overheadHeight": {
+              "type": "number",
+              "description": "Sign-light strip (mm). Height of the strip at the bottom of those columns that aims above the cut-off. 0 for none",
+              "minimum": 0,
+              "maximum": 20
+            },
+            "overheadDeg": {
+              "type": "number",
+              "description": "Sign-light aim (°). How far above the horizon the sign-light strip aims",
+              "minimum": 0.5,
+              "maximum": 8
+            },
+            "reflectance": {
+              "type": "number",
+              "description": "Reflectance",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "slopeErrorMrad": {
+              "type": "number",
+              "description": "Slope error (mrad)",
+              "minimum": 0,
+              "maximum": 30
+            }
+          }
+        }
+      ]
+    },
+    "cover": {
+      "type": "object",
+      "description": "Outer lens",
+      "additionalProperties": false,
+      "required": [
+        "transmittance",
+        "haze",
+        "hazeAngleDeg"
+      ],
+      "properties": {
+        "transmittance": {
+          "type": "number",
+          "description": "Transmittance. Clear polycarbonate outer lenses pass about 0.85–0.92",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "haze": {
+          "type": "number",
+          "description": "Haze. Share of the light the outer lens scatters out of the beam: by the ASTM D1003 definition, light turned more than 2.5°. New clear polycarbonate lenses scatter about 0.5–1%; ageing raises it",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "hazeAngleDeg": {
+          "type": "number",
+          "description": "Haze spread (°). Spread of the scattered light, as a Gaussian σ per axis",
+          "minimum": 0.1,
+          "maximum": 30
+        }
+      }
+    },
+    "mounting": {
+      "type": "object",
+      "description": "Mounting",
+      "additionalProperties": false,
+      "required": [
+        "height",
+        "aimPercent"
+      ],
+      "properties": {
+        "height": {
+          "type": "number",
+          "description": "Mounting height (m). Height of the lamp above the road, for the road view",
+          "minimum": 0.3,
+          "maximum": 2
+        },
+        "aimPercent": {
+          "type": "number",
+          "description": "Downward aim (%). Initial inclination of the cut-off, as a percentage, for the road view",
+          "minimum": 0,
+          "maximum": 5
+        }
+      }
+    },
+    "simulation": {
+      "type": "object",
+      "description": "Simulation",
+      "additionalProperties": false,
+      "required": [
+        "rays",
+        "seed"
+      ],
+      "properties": {
+        "rays": {
+          "type": "integer",
+          "description": "Rays",
+          "minimum": 10000,
+          "maximum": 50000000
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Random seed",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      }
+    }
+  }
+}
