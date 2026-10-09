@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-/** Writes schema/cutline.design.v1.schema.json from the design spec. Run after changing src/core/model.js. */
+/** Writes schema/cutline.<document>.v<n>.schema.json for every document type from its spec. Run after changing a
+ * spec: DESIGN_SPEC in src/core/model.js, STUDY_SPEC in src/core/study.js or VEHICLE_SPEC in src/core/vehicle.js. */
 import { writeFileSync } from 'node:fs';
-import { designJsonSchema } from '../src/core/schema.js';
-import { FORMAT_VERSION } from '../src/core/model.js';
+import { SCHEMAS, jsonSchemaFor, schemaFileName } from '../src/core/schema.js';
 
-const path = new URL(`../schema/cutline.design.v${FORMAT_VERSION}.schema.json`, import.meta.url);
-writeFileSync(path, JSON.stringify(designJsonSchema(), null, 2) + '\n');
-console.log(`Wrote ${path.pathname}`);
+for (const entry of SCHEMAS) {
+  const path = new URL(`../schema/${schemaFileName(entry)}`, import.meta.url);
+  writeFileSync(path, JSON.stringify(jsonSchemaFor(entry), null, 2) + '\n');
+  console.log(`Wrote ${path.pathname}`);
+}

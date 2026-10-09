@@ -4,19 +4,21 @@
 /** @import { Design } from '../core/model.js' */
 /** @import { Analysis, BeamData } from '../core/analysis.js' */
 /** @import { Evaluation } from '../core/regulation/evaluate.js' */
-/** @import { AnalyseRequest, AnalyseResponse } from './protocol.js' */
+/** @import { AnalyseRequest, AnalyseResponse, StudyRequest, StudyResponse } from './protocol.js' */
+/** @import { Study } from '../core/study.js' */
+/** @import { StudyAnalysis } from '../core/study-analysis.js' */
 
 export class AnalysisClient {
   /** @param {Worker} worker */
   constructor(worker) {
     this.worker = worker;
     this.nextId = 1;
-    /** @type {Map<number, { channel: string, resolve: (r: AnalyseResponse) => void, reject: (e: Error) => void }>} */
+    /** @type {Map<number, { channel: string, resolve: (r: any) => void, reject: (e: Error) => void }>} */
     this.pending = new Map();
     /** @type {Map<string, number>} latest request id per channel */
     this.latest = new Map();
     worker.onmessage = event => {
-      const message = /** @type {AnalyseResponse} */ (event.data);
+      const message = /** @type {AnalyseResponse | StudyResponse} */ (event.data);
       const entry = this.pending.get(message.id);
       if (!entry) return;
       this.pending.delete(message.id);
@@ -54,5 +56,22 @@ export class AnalysisClient {
   async evaluate(channel, design, data) {
     const r = await this.send(channel, design, data, false);
     return r && r.ok ? r.evaluation : null;
+  }
+
+  /**
+   * The analysis of a photometry study.
+   * @param {string} channel @param {Study} study
+   * @returns {Promise<StudyAnalysis | null>}
+   */
+  async study(channel, study) {
+    const id = this.nextId++;
+    this.latest.set(channel, id);
+    /** @type {StudyRequest} */
+    const request = { kind: 'study', id, study };
+    /** @type {StudyResponse} */
+    const response = await new Promise((resolve, reject) => { this.pending.set(id, { channel, resolve, reject }); this.worker.postMessage(request); });
+    if (this.latest.get(channel) !== id) return null;
+    if (!response.ok) throw new Error(response.error);
+    return response.study;
   }
 }

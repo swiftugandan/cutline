@@ -5,7 +5,7 @@ import { CONVENTION } from './lamp.js';
 import { isPassing } from './model.js';
 import { binSolidAngle } from './photometry.js';
 import { gridSize } from './tracer.js';
-import { roadIlluminance } from './road.js';
+import { roadIlluminance, designRoad } from './road.js';
 import { evaluate, evaluationInput, Beam } from './regulation/evaluate.js';
 import { RULES } from './regulation/r149.js';
 
@@ -38,7 +38,7 @@ export function analyse(design, data) {
   // On the road the aimed beam is raised so a passing beam's cut-off sits on the horizon; the vehicle's own downward
   // aim then tilts it back. A 1% aim puts the cut-off where the laboratory did, on line B.
   const lift = isPassing(design) ? -RULES.lineB : 0;
-  const road = roadIlluminance(design, (h, v) => beam.at(h, v - lift, 0, 0));
+  const road = roadIlluminance(designRoad(design), (h, v) => beam.at(h, v - lift, 0, 0));
   return { evaluation, layers, road, peak: beam.maximum(), emitted: data.emitted, ledger: data.ledger, rays: data.rays };
 }
 
@@ -86,4 +86,37 @@ export function displayCandela(hist, convention, minHalf) {
 /** The evaluation alone, for the optimiser. @param {Design} design @param {BeamData} data @returns {Evaluation} */
 export function evaluateBeam(design, data) {
   return evaluate(evaluationInput(design), data.histograms, CONVENTION);
+}
+
+/**
+ * Angles of the grid a traced design is exported on as an IES file: 0.1° steps across the fine grid, where the
+ * cut-off and the hot spot are, and 0.5° beyond it, out to the wide grid's edges.
+ */
+export function exportGridAngles() {
+  /** @param {number} lo @param {number} fineLo @param {number} fineHi @param {number} hi */
+  const axis = (lo, fineLo, fineHi, hi) => {
+    const out = [];
+    for (let x = lo; x < fineLo - 1e-9; x += 0.5) out.push(+x.toFixed(3));
+    for (let x = fineLo; x < fineHi - 1e-9; x += 0.1) out.push(+x.toFixed(3));
+    for (let x = fineHi; x <= hi + 1e-9; x += 0.5) out.push(+x.toFixed(3));
+    return out;
+  };
+  return { horizontal: axis(-60, -20, 20, 60), vertical: axis(-30, -6, 5, 30) };
+}
+
+/**
+ * Candela at a direction from display layers, by bilinear interpolation between bin centres in the finest layer that
+ * holds the direction.
+ * @param {CandelaLayer[]} layers @param {number} h @param {number} v
+ */
+export function layerCandela(layers, h, v) {
+  for (const layer of [...layers].sort((a, b) => a.spec.step * a.spec.vStep - b.spec.step * b.spec.vStep)) {
+    const s = layer.spec, { nh, nv } = gridSize(s);
+    if (h < s.hMin || h > s.hMax || v < s.vMin || v > s.vMax) continue;
+    const x = Math.min(nh - 1, Math.max(0, (h - s.hMin) / s.step - 0.5)), y = Math.min(nv - 1, Math.max(0, (v - s.vMin) / s.vStep - 0.5));
+    const c0 = Math.min(nh - 2, Math.floor(x)), r0 = Math.min(nv - 2, Math.floor(y)), tx = x - c0, ty = y - r0;
+    const at = (/** @type {number} */ r, /** @type {number} */ c) => layer.candela[r * nh + c];
+    return (1 - ty) * ((1 - tx) * at(r0, c0) + tx * at(r0, c0 + 1)) + ty * ((1 - tx) * at(r0 + 1, c0) + tx * at(r0 + 1, c0 + 1));
+  }
+  return 0;
 }

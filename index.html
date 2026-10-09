@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#15181e">
-<meta name="description" content="Design car headlamps in your browser. LED projectors and reflectors traced ray by ray and checked against UN Regulation No. 149.">
+<meta name="description" content="Design and check car lamps in your browser: trace headlamps ray by ray, check light distribution files against UN, US, Canadian and Taiwanese regulations, and check lamp positions on a vehicle.">
 <title>Cutline</title>
 <link rel="icon" href="./favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="./style.css">
@@ -17,6 +17,12 @@
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><use href="#mark"/></svg>
       <span class="wordmark">cutline</span>
     </a>
+    <span class="title-divider" aria-hidden="true"></span>
+    <div class="workspace-switch" id="workspaceSwitch" role="group" aria-label="Workspace">
+      <button type="button" data-cmd="workspace-design" aria-pressed="true" data-tip="Design and trace a headlamp"><span data-icon="projector"></span><span>Lamp design</span></button>
+      <button type="button" data-cmd="workspace-photometry" aria-pressed="false" data-tip="Check a light distribution file against every market"><span data-icon="globe"></span><span>Photometry</span></button>
+      <button type="button" data-cmd="workspace-vehicle" aria-pressed="false" data-tip="Check where lamps sit on a vehicle"><span data-icon="car"></span><span>Vehicle</span></button>
+    </div>
     <span class="title-divider" aria-hidden="true"></span>
     <div class="quick-actions">
       <button class="icon-button on-ink" data-cmd="save" data-tip="Download design (Ctrl+S)" aria-label="Download design"><span data-icon="download"></span></button>
@@ -63,8 +69,11 @@
         </div>
       </div>
       <div class="viewport" id="viewport">
+        <canvas id="view3d" aria-hidden="true" hidden></canvas>
         <canvas id="view" role="img" aria-label="Headlamp beam pattern"></canvas>
         <div class="view-legend" id="viewLegend" aria-hidden="true"></div>
+        <div class="scale-panel-host" id="scalePanel" hidden></div>
+        <div class="viewport-empty" id="viewportEmpty" hidden></div>
         <div class="scale-bar" id="scaleBar" aria-hidden="true"><i></i><span></span></div>
         <div class="view-tooltip" id="viewTooltip" role="tooltip" hidden></div>
       </div>

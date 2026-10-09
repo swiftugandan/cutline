@@ -8,7 +8,7 @@ import { trace } from '../src/core/tracer.js';
 import { analyse } from '../src/core/analysis.js';
 import { cutoffAt } from '../src/core/lamps/cutoff.js';
 import { sectionOutlines, outlineBounds } from '../src/core/section.js';
-import { wallColour } from '../src/render/beam-view.js';
+import { PALETTES, colourAt } from '../src/render/palettes.js';
 import { gridSize } from '../src/core/tracer.js';
 import { Beam } from '../src/core/regulation/evaluate.js';
 import { CONVENTION } from '../src/core/lamp.js';
@@ -82,7 +82,7 @@ export function beamPng(analysis, width, height) {
       break;
     }
     const t = cd > 10 ? (Math.log10(cd) - 1) / Math.max(0.1, logMax - 1) : 0;
-    const [cr, cg, cb] = wallColour(t);
+    const [cr, cg, cb] = colourAt(PALETTES.night, t);
     const k = (y * width + x) * 3;
     rgb[k] = cr; rgb[k + 1] = cg; rgb[k + 2] = cb;
   }

@@ -5,10 +5,15 @@
 import { buildLamp, traceOptions } from '../core/lamp.js';
 import { trace } from '../core/tracer.js';
 import { analyse, evaluateBeam } from '../core/analysis.js';
+import { analyseStudy } from '../core/study-analysis.js';
 
-/** @import { WorkerRequest, ChunkResponse, AnalyseResponse } from './protocol.js' */
+/** @import { WorkerRequest, ChunkResponse, AnalyseResponse, StudyResponse } from './protocol.js' */
+/** @import { StudyCache } from '../core/study-analysis.js' */
 
 const scope = /** @type {DedicatedWorkerGlobalScope} */ (/** @type {unknown} */ (self));
+
+/** The last study's resampled file, kept while only its other settings change. @type {StudyCache | null} */
+let studyCache = null;
 
 scope.onmessage = event => {
   const job = /** @type {WorkerRequest} */ (event.data);
@@ -18,6 +23,15 @@ scope.onmessage = event => {
       /** @type {ChunkResponse} */
       const message = { id: job.id, ok: true, result };
       scope.postMessage(message, result.histograms.flatMap(h => [h.flux.buffer, h.count.buffer]));
+      return;
+    }
+    if (job.kind === 'study') {
+      const { analysis, cache } = analyseStudy(job.study, studyCache);
+      studyCache = cache;
+      /** @type {StudyResponse} */
+      const message = { id: job.id, ok: true, study: analysis };
+      // The layers are copied, not transferred: the cache keeps the histograms they came from, not the layers.
+      scope.postMessage(message, [...Object.values(analysis.layers).flatMap(ls => (ls ?? []).map(l => l.candela.buffer)), ...(analysis.road ? [analysis.road.lux.buffer] : [])]);
       return;
     }
     if (job.full) {

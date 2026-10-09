@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cutline:schema:vehicle:v1",
+  "title": "Cutline vehicle",
+  "type": "object",
+  "description": "A vehicle and the lamps placed on it, in millimetres in the vehicle frame: x forwards from the front-most point, y to the left of the median plane, z up from the ground. The model file itself is kept beside this document, not in it. Cross-field rules are listed in docs/SCHEMA.md and checked by the loader.",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "id",
+    "title",
+    "notes",
+    "model",
+    "vehicle",
+    "lamps"
+  ],
+  "properties": {
+    "format": {
+      "const": "cutline.vehicle"
+    },
+    "version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Identifier"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "Title"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "Notes"
+    },
+    "model": {
+      "type": "object",
+      "description": "Model",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "units",
+        "forward",
+        "up",
+        "groundBelow"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 260,
+          "description": "File name"
+        },
+        "units": {
+          "enum": [
+            "mm",
+            "cm",
+            "m",
+            "in"
+          ],
+          "description": "Units. The unit the model file is drawn in"
+        },
+        "forward": {
+          "enum": [
+            "+x",
+            "-x",
+            "+y",
+            "-y",
+            "+z",
+            "-z"
+          ],
+          "description": "Forward is. The model's axis that points to the front of the vehicle"
+        },
+        "up": {
+          "enum": [
+            "+x",
+            "-x",
+            "+y",
+            "-y",
+            "+z",
+            "-z"
+          ],
+          "description": "Up is. The model's axis that points up"
+        },
+        "groundBelow": {
+          "type": "number",
+          "description": "Ground below the model (mm). How far below the model's lowest point the road lies. 0 when the tyres are in the model",
+          "minimum": 0,
+          "maximum": 2000
+        }
+      }
+    },
+    "vehicle": {
+      "type": "object",
+      "description": "Vehicle",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "fmvssType",
+        "overallWidth",
+        "r48",
+        "fmvss108"
+      ],
+      "properties": {
+        "category": {
+          "enum": [
+            "M1",
+            "N1",
+            "M2",
+            "M3",
+            "N2",
+            "N3"
+          ],
+          "description": "Category. The UN vehicle category: M1 passenger cars, N1 light goods vehicles, and so on. R48 sets presence and some limits by category"
+        },
+        "fmvssType": {
+          "enum": [
+            "passengerCar",
+            "mpvTruckBusNarrow",
+            "mpvTruckBusWide"
+          ],
+          "description": "FMVSS vehicle type. The vehicle type of FMVSS 108 Table I"
+        },
+        "overallWidth": {
+          "type": "number",
+          "description": "Overall width (mm). Between the extreme outer edges, leaving out mirrors, side lamps and tyre bulge (R48 §2.3.3). 0 takes the model's width, which includes the mirrors",
+          "minimum": 0,
+          "maximum": 5000
+        },
+        "r48": {
+          "enum": [
+            "no",
+            "yes"
+          ],
+          "description": "Check UN R48"
+        },
+        "fmvss108": {
+          "enum": [
+            "no",
+            "yes"
+          ],
+          "description": "Check FMVSS 108"
+        }
+      }
+    },
+    "lamps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "Lamp",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "role",
+          "facing",
+          "x",
+          "y",
+          "z",
+          "width",
+          "height"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "Name"
+          },
+          "role": {
+            "enum": [
+              "passing",
+              "driving",
+              "front-fog",
+              "drl",
+              "front-position",
+              "turn-front",
+              "turn-side-5",
+              "turn-side-6",
+              "side-marker",
+              "side-marker-rear",
+              "end-outline",
+              "cornering",
+              "rear-position",
+              "stop",
+              "high-mounted-stop",
+              "turn-rear",
+              "reversing",
+              "rear-fog",
+              "parking",
+              "registration-plate"
+            ],
+            "description": "Function"
+          },
+          "facing": {
+            "enum": [
+              "front",
+              "rear",
+              "left",
+              "right"
+            ],
+            "description": "Faces. The direction of the reference axis"
+          },
+          "x": {
+            "type": "number",
+            "description": "Ahead (mm). From the vehicle's front-most point; negative is behind it",
+            "minimum": -30000,
+            "maximum": 1000
+          },
+          "y": {
+            "type": "number",
+            "description": "Left (mm). From the median plane; negative is to the right",
+            "minimum": -3000,
+            "maximum": 3000
+          },
+          "z": {
+            "type": "number",
+            "description": "Up (mm). From the ground",
+            "minimum": -500,
+            "maximum": 6000
+          },
+          "width": {
+            "type": "number",
+            "description": "Apparent surface width (mm). Across, seen along the reference axis",
+            "minimum": 1,
+            "maximum": 3000
+          },
+          "height": {
+            "type": "number",
+            "description": "Apparent surface height (mm)",
+            "minimum": 1,
+            "maximum": 3000
+          }
+        }
+      },
+      "maxItems": 120,
+      "description": "Lamps"
+    }
+  }
+}

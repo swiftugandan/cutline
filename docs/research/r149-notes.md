@@ -193,7 +193,7 @@ Notes to Table 6 (V-img: S01 p.24): ᵃ For a matched pair each lamp must contri
 
 ### 2c. Legacy: 00-series Table 8, Classes A, B, D (as amended through Supplement 3)
 
-Source: S00 Table 8 p.29–30 (V-img) with Part A replaced by **S00-Sup3 (WP.29/2021/46) p.2 (V-img)**; Sup2 (WP.29/2019/125) had already deleted the 50L minima. No later 00-series supplement touches Table 8 (I checked Sup4–Sup10). Units cd; RHT.
+Source: S00 Table 8 p.29–30 (V-img) with Part A replaced by **S00-Sup3 (WP.29/2021/46) p.2 (V-img)**; Supplement 1 (WP.29/2019/125, which WP.29/1149 para. 69 retitled as part of Supplement 1, published as slip Add.148/Amend.1) had already deleted the 50L minima; see docs/research/r149-00-notes.md. No later 00-series supplement touches Table 8 (I checked Sup4–Sup10). Units cd; RHT.
 
 | No. | Element | Horizontal | Vertical | A min | A max | B min | B max | D min | D max |
 |---|---|---|---|---|---|---|---|---|---|
@@ -221,7 +221,7 @@ Source: S00 Table 8 p.29–30 (V-img) with Part A replaced by **S00-Sup3 (WP.29/
 | – | Imax L (renamed from Emax L) | left of V-V | | | | | | | 31,300 |
 
 \* LED modules with electronic control gear: not more than 18,500 cd. \*\* Actual measured value at 50R / 50L respectively. \*\*\* LHT: swap R and L. (V-img: S00 p.30.)
-Original S00 (before Sup2) also printed 50L minima of 3,550 (A) and 6,800 (B); Sup2 deleted them as a transposition error from R112 (V: S00-Sup2 p.2; GAR summary).
+Original S00 (before Supplement 1) also printed 50L minima of 3,550 (A) and 6,800 (B); Supplement 1 deleted them as a transposition error from R112 (WP.29/2019/125 p. 2, retitled by WP.29/1149 para. 69; slip Add.148/Amend.1). An earlier version of this note attributed the deletion to Supplement 2; that was wrong.
 
 Part B (minima, sums): B1 4U-8L + B2 4U-0 + B3 4U-8R ≥ 190; B4 2U-4L + B5 2U-0 + B6 2U-4R ≥ 375; B7 0-8L ≥ 65; B8 0-4L ≥ 125. Part C Zone III vertices: 8L/1U, 8L/4U, 8R/4U, 8R/2U, 6R/1.5U, 1.5R/1.5U, V-V/H-H, 4L/H-H. **V-img: S00 p.30.**
 Class D run-up (00 only): ≥ 6,250 cd at 50V four seconds after ignition (lamp off ≥ 30 min, ballast not integrated) — V: S00-Sup2b (WP.29/2020/33) §5.2.2.1.

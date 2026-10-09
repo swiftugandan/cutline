@@ -1,38 +1,27 @@
-/** Checks a traced beam against UN R149: aims it the way the regulation's instrumental method does, then measures every
- * point, segment, zone and rule with the receiver's size, and reports margins. Requirements live in ./r149.js. */
+/** Checks a traced or imported beam against UN R149: aims it the way the regulation's instrumental method does, then
+ * measures every point, line, zone and rule with the receiver's size, and reports margins. Requirements live in
+ * ./r149.js; the measurements are the shared engine's (./engine.js). */
 
 import { passingRequirements, drivingRequirements, RULES, SOURCE } from './r149.js';
+import { measureRequirements, status, meets, weakest, MIN_RAYS } from './engine.js';
 import { gridSize } from '../tracer.js';
 import { binSolidAngle } from '../photometry.js';
 
 /** @import { Histogram, AngleConvention } from '../types.js' */
 /** @import { BeamClass } from './r149.js' */
 /** @import { Design } from '../model.js' */
+/** @import { Item } from './engine.js' */
 
 /**
- * @typedef {'pass' | 'near' | 'fail' | 'blocked'} Status
- *   'blocked': a relative rule whose reference point itself fails, so it cannot be judged yet.
- * @typedef {'cutoff' | 'glare' | 'signs' | 'beam' | 'foreground' | 'flux'} Group
- *   What a requirement protects: the cut-off's quality, other drivers from glare, overhead signs, the light on the road
- *   ahead, the near foreground, and the total flux.
- * @typedef {{ id: string, label: string, group: Group, requirement: string, value: number, unit: string, margin: number, error: number, status: Status, cite: string,
- *   h?: number, v?: number, polygon?: number[], segment?: [number, number, number] }} Item
- *   margin is the relative headroom: (value − min)/min or (max − value)/max; negative fails. error is the value's relative
- *   statistical error from the rays it rests on (0 for values that are not sampled). Positions are after aiming.
  * @typedef {{ value: number, rays: number }} Measurement
  * @typedef {{ dh: number, dv: number, method: string, notes: string[] }} Aim
  * @typedef {{ beamClass: BeamClass, traffic: 'right' | 'left', aim: Aim, items: Item[], pass: boolean, worst: Item | null, source: typeof SOURCE }} Evaluation
+ * @typedef {{ beamClass: BeamClass, traffic: 'right' | 'left', ledFlux: number, aimMethod: 'threeLine' | 'line02D' }} EvaluationInput
+ *   ledFlux: the source's objective flux in lumens, or 0 when it is not known (an imported file in absolute photometry).
+ * @typedef {{ aim?: 'laboratory' | 'measured', shift?: { dh: number, dv: number } }} EvaluationOptions
+ *   aim: 'laboratory' aims the beam by the regulation's method; 'measured' takes it as it is, moved by shift.
  */
 
-/** Relative headroom below which a passing value is flagged as near the limit. */
-export const NEAR = 0.1;
-/** Rays a measurement should rest on (about 10% statistical error), and how far the receiver may grow to find them. */
-export const MIN_RAYS = 100;
-/**
- * Rays for each position of a segment or zone. Their value is the weakest or brightest of many positions, and an
- * extreme of noisy values is biased by the noise, so each position rests on more rays (about 5% error).
- */
-export const EXTREME_RAYS = 400;
 const GROW_H = 2, GROW_V = 0.15;
 
 /**
@@ -40,11 +29,18 @@ const GROW_H = 2, GROW_V = 0.15;
  * the beam by (dh, dv), so the aimed beam at (h, v) is the traced beam at (h − dh, v − dv).
  */
 export class Beam {
-  /** @param {Histogram[]} histograms wide first, fine second @param {AngleConvention} convention */
-  constructor(histograms, convention) {
+  /**
+   * @param {Histogram[]} histograms wide first, fine second @param {AngleConvention} convention
+   * @param {{ exact?: boolean }} [options] exact: the histograms hold an imported file, whose bins carry no statistical
+   *   error; a bin without rays then lies outside the file, not in the dark.
+   */
+  constructor(histograms, convention, { exact = false } = {}) {
     this.wide = histograms[0];
     this.fine = histograms[1];
     this.convention = convention;
+    this.exact = exact;
+    /** The receiver's width in degrees. */
+    this.receiverDeg = RULES.receiverDeg;
     this.dh = 0; this.dv = 0;
     this.wideCd = toCandela(this.wide, convention);
     this.fineCd = toCandela(this.fine, convention);
@@ -125,7 +121,7 @@ export class Beam {
    * Intensity at an aimed direction, averaged over a rectangle of half-sizes (hr, vr).
    * @param {number} h @param {number} v @param {number} hr @param {number} vr
    */
-  at(h, v, hr = RULES.receiverDeg / 2, vr = RULES.receiverDeg / 2) {
+  at(h, v, hr = this.receiverDeg / 2, vr = this.receiverDeg / 2) {
     const b = this.box(h, v, hr, vr);
     return b.omega > 0 ? b.flux / b.omega : 0;
   }
@@ -138,7 +134,7 @@ export class Beam {
    * @returns {Measurement}
    */
   measure(h, v, minRays = MIN_RAYS) {
-    let hr = RULES.receiverDeg / 2, vr = RULES.receiverDeg / 2;
+    let hr = this.receiverDeg / 2, vr = this.receiverDeg / 2;
     let b = this.box(h, v, hr, vr);
     while (b.rays < minRays && hr < GROW_H) {
       hr = Math.min(GROW_H, hr * 1.5); vr = Math.min(GROW_V, vr * 1.5);
@@ -161,21 +157,23 @@ export class Beam {
   /**
    * Highest receiver-averaged intensity, and where (aimed frame). Found on the fine grid around its brightest bins, so a
    * single lucky bin cannot set it; outside the fine grid the wide grid's bins count as they are.
+   * @param {(h: number, v: number) => boolean} [skip] directions to leave out, such as a zone with its own maximum
    * @returns {Measurement & { h: number, v: number }}
    */
-  maximum() {
+  maximum(skip = () => false) {
     let best = { value: 0, rays: 0, h: 0, v: 0 };
     const ws = this.wide.spec, wn = gridSize(ws).nh;
     this.wideCd.forEach((val, i) => {
       const h = ws.hMin + ((i % wn) + 0.5) * ws.step + this.dh, v = ws.vMin + (Math.floor(i / wn) + 0.5) * ws.vStep + this.dv;
-      if (val > best.value && !Beam.covers(this.fine, h - this.dh, v - this.dv)) best = { value: val, rays: this.wide.count[i], h, v };
+      if (val > best.value && !Beam.covers(this.fine, h - this.dh, v - this.dv) && !skip(h, v)) best = { value: val, rays: this.wide.count[i], h, v };
     });
     const fs = this.fine.spec, fn = gridSize(fs).nh;
     const peak = this.fineCd.reduce((a, x) => Math.max(a, x), 0);
     this.fineCd.forEach((val, i) => {
       if (val < 0.5 * peak) return;
       const h = fs.hMin + ((i % fn) + 0.5) * fs.step + this.dh, v = fs.vMin + (Math.floor(i / fn) + 0.5) * fs.vStep + this.dv;
-      const b = this.box(h, v, RULES.receiverDeg / 2, RULES.receiverDeg / 2);
+      if (skip(h, v)) return;
+      const b = this.box(h, v, this.receiverDeg / 2, this.receiverDeg / 2);
       const cd = b.omega > 0 ? b.flux / b.omega : 0;
       if (cd > best.value) best = { value: cd, rays: b.rays, h, v };
     });
@@ -279,227 +277,137 @@ function horizontalScan(beam, v, from, to, towards) {
   return { g: r.g, inflection: -r.inflection };
 }
 
-/**
- * The group of a point or segment requirement. On a passing beam a maximum guards against glare, except P: a minimum
- * above the cut-off that keeps the road edge and signs visible. On a driving beam every point lights the road.
- * @param {{ id: string, min?: number, max?: number, v: number }} r @param {boolean} passing
- * @returns {Group}
- */
-function groupOf(r, passing) {
-  if (!passing) return 'beam';
-  if (r.id === 'P') return 'signs';
-  if (r.id.startsWith('Segment 10')) return 'foreground';
-  return r.max !== undefined && r.min === undefined ? 'glare' : 'beam';
-}
 
-/** Mirrors a right-hand-traffic label for left-hand traffic: L ↔ R in test-point names. @param {string} id */
-export function mirrorLabel(id) {
-  /** @type {Record<string, string>} */
-  const swap = { LL: 'RR', RR: 'LL', L: 'R', R: 'L' };
-  return id.replace(/\b(\d*)(LL|RR|L|R)\b/g, (_, n, side) => n + swap[side]).replace(/B50L|B50R/, m => (m === 'B50L' ? 'B50R' : 'B50L')).replace(/BLL|BRR/, m => (m === 'BLL' ? 'BRR' : 'BLL'));
-}
-
-/** @param {number} value @param {number | undefined} min @param {number | undefined} max */
-function margin(value, min, max) {
-  const a = min !== undefined ? (value - min) / min : Infinity;
-  const b = max !== undefined ? (max - value) / max : Infinity;
-  return Math.min(a, b);
-}
-
-/** Relative statistical error of a value resting on n rays. @param {number} n */
-const errorOf = n => (n > 0 ? 1 / Math.sqrt(n) : 1);
-
-/** A passing value counts as near the limit within NEAR, or within twice its statistical error. @param {number} m @param {number} [error] @returns {Status} */
-const status = (m, error = 0) => (m < 0 ? 'fail' : m < Math.max(NEAR, 2 * error) ? 'near' : 'pass');
-
-/** @param {number | undefined} min @param {number | undefined} max @param {string} unit */
-function limitText(min, max, unit) {
-  const f = /** @param {number} v */ v => `${v.toLocaleString('en-GB')} ${unit}`;
-  if (min !== undefined && max !== undefined) return `${f(min)} to ${f(max)}`;
-  return min !== undefined ? `at least ${f(min)}` : `at most ${f(/** @type {number} */ (max))}`;
-}
-
-/** What the evaluator needs from a design. @param {Design} design */
+/** What the evaluator needs from a design. @param {Design} design @returns {EvaluationInput} */
 export function evaluationInput(design) {
   return { beamClass: design.beamClass, traffic: design.traffic, ledFlux: design.led.flux, aimMethod: design.cutoff.aimMethod };
 }
 
+/** Whether a class is a passing beam. @param {BeamClass} cls */
+const passingClass = cls => cls === 'C' || cls === 'V';
+
 /**
- * @param {{ beamClass: BeamClass, traffic: 'right' | 'left', ledFlux: number, aimMethod: 'threeLine' | 'line02D' }} design
- * @param {Histogram[]} histograms @param {AngleConvention} convention
- * @returns {Evaluation}
+ * Aims a beam the way R149's laboratory does and checks the cut-off it aims by. A passing beam is aimed by its cut-off
+ * (Annex 6); a driving beam has its maximum centred on H-V (Annex 5 §3.1.2). Moves the beam in place.
+ * @param {Beam} beam @param {EvaluationInput} design
+ * @returns {{ aim: Aim, items: Item[] }} the aim, and the cut-off's sharpness and linearity for a passing beam
  */
-export function evaluate(design, histograms, convention) {
-  const beam = new Beam(histograms, convention);
+export function aimR149(beam, design) {
   const s = design.traffic === 'right' ? 1 : -1;
-  const passing = design.beamClass === 'C' || design.beamClass === 'V';
   /** @type {Item[]} */
   const items = [];
   /** @type {Aim} */
   const aim = { dh: 0, dv: 0, method: '', notes: [] };
-
-  if (passing) {
-    // Vertical aim: the inflection of the cut-off at 2.5° on the driver's side goes to line B.
-    const scan = verticalScan(beam, s * RULES.sharpnessScanH, -4, 2);
-    if (Number.isFinite(scan.inflection)) {
-      beam.dv = RULES.lineB - scan.inflection;
-      aim.dv = beam.dv;
-    } else aim.notes.push('No cut-off was found on the 2.5° scan; the beam was not aimed vertically.');
-    const g = verticalScan(beam, s * RULES.sharpnessScanH, -4, 2).g;
-    const gm = Math.min((g - RULES.sharpness.min) / RULES.sharpness.min, (RULES.sharpness.max - g) / RULES.sharpness.max);
-    items.push({ id: 'Sharpness', group: 'cutoff', label: `Cut-off sharpness at 2.5°${s > 0 ? 'L' : 'R'}`, requirement: `G from ${RULES.sharpness.min} to ${RULES.sharpness.max}`, value: g, unit: 'G', margin: gm, error: 0, status: status(gm), cite: RULES.sharpnessCite, h: s * RULES.sharpnessScanH, v: RULES.lineB });
-    // Linearity: the inflection points at 1.5°, 2.5° and 3.5° lie within 0.2° of each other.
-    const inflections = RULES.linearity.h.map(h => verticalScan(beam, s * h, -3, 1.5).inflection);
-    const spread = Math.max(...inflections) - Math.min(...inflections);
-    const lm = (RULES.linearity.maxSpread - spread) / RULES.linearity.maxSpread;
-    items.push({ id: 'Linearity', group: 'cutoff', label: 'Cut-off linearity, 1.5° to 3.5°', requirement: `inflections within ${RULES.linearity.maxSpread}°`, value: spread, unit: '°', margin: Number.isFinite(lm) ? lm : -1, error: 0, status: status(Number.isFinite(lm) ? lm : -1), cite: RULES.linearityCite });
-    // Horizontal aim by the applicant's method: (a) the 0.2°D line, or (b) three vertical scans on the kerb side.
-    const H = RULES.horizontalAim;
-    if (design.aimMethod === 'threeLine') {
-      /** @param {{ h: number, inflection: number }[]} xs */
-      const fit = xs => {
-        const n = xs.length, mh = xs.reduce((a, x) => a + x.h, 0) / n, mv = xs.reduce((a, x) => a + x.inflection, 0) / n;
-        const sxx = xs.reduce((a, x) => a + (x.h - mh) ** 2, 0), sxy = xs.reduce((a, x) => a + (x.h - mh) * (x.inflection - mv), 0);
-        return { mh, mv, slope: sxy / sxx };
-      };
-      // A first pass with narrow scans finds the rising edge's slope. The second scans along strips that follow that
-      // slope ±0.4° across, which gathers far more rays for the same sharpness, so the inflections, and the aim the
-      // line through them gives, hold still between traces.
-      const first = H.threeLineH.map(h => ({ h: s * h, ...verticalScan(beam, s * h, -2, 2, 0.2) }));
-      const rough = fit(first).slope;
-      const scans = Number.isFinite(rough) ? H.threeLineH.map(h => ({ h: s * h, ...verticalScan(beam, s * h, -2, 2, 0.4, rough) })) : first;
-      if (scans.every(x => x.g >= H.minG && Number.isFinite(x.inflection))) {
-        const { mh, mv, slope } = fit(scans);
-        // Where the fitted line meets line B goes onto V-V.
-        if (Math.abs(slope) > 1e-6) beam.dh = -(mh + (RULES.lineB - mv) / slope);
-        else aim.notes.push('The three inflection points lie level, so the line through them never meets line B; the beam was not aimed sideways.');
-      } else aim.notes.push(`A scan at 1°, 2° or 3°${s > 0 ? 'R' : 'L'} found no gradient of ${H.minG}; the beam was not aimed sideways.`);
-      aim.method = 'three lines (Annex 6 §2.3.2.1 b)';
-    } else {
-      const line = horizontalScan(beam, H.lineAV, -5, 5, -s);
-      if (line.g >= H.minG) beam.dh = s * H.lineAH - line.inflection;
-      else aim.notes.push(`The 0.2°D line found no gradient of ${H.minG}; the beam was not aimed sideways.`);
-      aim.method = '0.2°D line (Annex 6 §2.3.2.1 a)';
-    }
-    aim.dh = beam.dh;
-    // Aiming should move the beam only slightly; a large shift means the cut-off is not where the design intends.
-    if (Math.abs(aim.dv) > 0.25) aim.notes.push(`Aiming moved the beam ${Math.abs(aim.dv).toFixed(2)}° ${aim.dv > 0 ? 'up' : 'down'}: the cut-off sits away from the intended 0.57°D.`);
-    if (Math.abs(aim.dh) > 0.75) aim.notes.push(`Aiming moved the beam ${Math.abs(aim.dh).toFixed(2)}° sideways: the elbow sits away from V-V.`);
-  } else {
-    // A driving beam's area of maximum intensity is centred on H-V (Annex 5 §3.1.2).
+  if (!passingClass(design.beamClass)) {
     const m = beam.maximum();
     beam.dh = -m.h; beam.dv = -m.v;
     aim.dh = beam.dh; aim.dv = beam.dv;
     aim.method = 'maximum centred on H-V (Annex 5 §3.1.2)';
+    return { aim, items };
   }
-
-  const requirements = passing ? passingRequirements(/** @type {'C' | 'V'} */ (design.beamClass)) : drivingRequirements(/** @type {'A' | 'B'} */ (design.beamClass));
-  const peak = beam.maximum();
-  const imax = peak.value;
-  /** @type {Map<string, Measurement>} */
-  const pointValues = new Map();
-  const tol = passing ? 0 : RULES.drivingTolerance;
-  /** The most favourable measurement within the coordinate tolerance. @param {number} h @param {number} v @param {boolean} wantHigh */
-  const pointValue = (h, v, wantHigh) => {
-    if (tol === 0) return beam.measure(h, v);
-    let best = { value: wantHigh ? -Infinity : Infinity, rays: 0 };
-    for (let dh = -tol; dh <= tol + 1e-9; dh += 0.05) for (let dv = -tol; dv <= tol + 1e-9; dv += 0.05) {
-      if (dh * dh + dv * dv > tol * tol + 1e-9) continue;
-      const x = beam.measure(h + dh, v + dv);
-      if (wantHigh ? x.value > best.value : x.value < best.value) best = x;
-    }
-    return best;
-  };
-  /** @param {Omit<Item, 'margin' | 'error' | 'status'>} base @param {number | undefined} min @param {number | undefined} max @param {number} rays */
-  const push = (base, min, max, rays) => {
-    const m = margin(base.value, min, max), error = errorOf(rays);
-    items.push({ ...base, margin: m, error, status: status(m, error) });
-  };
-  for (const r of requirements) {
-    const label = s > 0 ? r.id : mirrorLabel(r.id);
-    if (r.kind === 'point') {
-      const min = r.minOfImax !== undefined ? r.minOfImax * imax : r.min;
-      const x = pointValue(s * r.h, r.v, min !== undefined);
-      pointValues.set(r.id, x);
-      push({ id: label, label, group: groupOf(r, passing), requirement: r.minOfImax !== undefined ? `at least ${Math.round(r.minOfImax * 100)}% of Imax` : limitText(min, r.max, 'cd'), value: x.value, unit: 'cd', cite: r.cite, h: s * r.h, v: r.v }, min, r.max, x.rays);
-    } else if (r.kind === 'segment') {
-      // The whole segment must comply: its weakest (or brightest) receiver position is the value.
-      const step = Math.max(Math.abs(r.h0), Math.abs(r.h1)) <= 20 ? 0.1 : 0.5;
-      let worst = { value: r.min !== undefined ? Infinity : -Infinity, rays: 0 };
-      for (let h = r.h0; h <= r.h1 + 1e-9; h += step) {
-        const x = beam.measure(s * h, r.v, EXTREME_RAYS);
-        if (r.min !== undefined ? x.value < worst.value : x.value > worst.value) worst = x;
-      }
-      push({ id: label, label, group: groupOf(r, passing), requirement: `${r.min !== undefined ? 'everywhere at least ' : 'nowhere above '}${limitText(r.min, r.max, 'cd').replace(/^at (least|most) /, '')}`, value: worst.value, unit: 'cd', cite: r.cite, segment: [s * r.h0, s * r.h1, r.v] }, r.min, r.max, worst.rays);
-    } else if (r.kind === 'zone') {
-      const polygon = r.polygon.map((x, i) => (i % 2 === 0 ? s * x : x));
-      const x = zoneMaximum(beam, polygon);
-      push({ id: label, label, group: 'glare', requirement: limitText(undefined, r.max, 'cd'), value: x.value, unit: 'cd', cite: r.cite, polygon }, undefined, r.max, x.rays);
-    } else if (r.kind === 'sum') {
-      let value = 0, variance = 0;
-      for (let i = 0; i < r.points.length; i += 2) {
-        const x = beam.measure(s * r.points[i], r.points[i + 1]);
-        value += x.value; variance += (x.value * errorOf(x.rays)) ** 2;
-      }
-      // Rays equivalent to the sum's combined error.
-      const rays = value > 0 && variance > 0 ? (value * value) / variance : 0;
-      push({ id: label, label, group: 'signs', requirement: limitText(r.min, undefined, 'cd'), value, unit: 'cd', cite: r.cite }, r.min, undefined, rays);
-    } else if (r.kind === 'region-relative') {
-      const of = s > 0 ? r.of : mirrorLabel(r.of);
-      const refItem = items.find(i => i.id === of);
-      const ref = pointValues.get(r.of);
-      if (!ref || (refItem && refItem.status === 'fail')) {
-        items.push({ id: label, label, group: 'foreground', requirement: `at most ${r.factor} × ${of}`, value: NaN, unit: 'cd', margin: NaN, error: 0, status: 'blocked', cite: r.cite });
-        continue;
-      }
-      let worst = { value: 0, rays: 0 };
-      for (let v = r.vMax; v >= -30 + 1e-9; v -= v > -6 ? 0.05 : 0.25) for (let h = r.h0; h <= r.h1 + 1e-9; h += 0.1) {
-        const x = beam.measure(s * h, v, EXTREME_RAYS);
-        if (x.value > worst.value) worst = x;
-      }
-      push({ id: label, label, group: 'foreground', requirement: `at most ${r.factor} × ${of}`, value: worst.value, unit: 'cd', cite: r.cite }, undefined, r.factor * ref.value, worst.rays);
-    } else if (r.kind === 'imax') {
-      push({ id: label, label: 'Maximum intensity', group: passing ? 'glare' : 'beam', requirement: limitText(r.min, r.max, 'cd'), value: imax, unit: 'cd', cite: r.cite }, r.min, r.max, peak.rays);
-    }
+  // Vertical aim: the inflection of the cut-off at 2.5° on the driver's side goes to line B.
+  const scan = verticalScan(beam, s * RULES.sharpnessScanH, -4, 2);
+  if (Number.isFinite(scan.inflection)) {
+    beam.dv = RULES.lineB - scan.inflection;
+    aim.dv = beam.dv;
+  } else aim.notes.push('No cut-off was found on the 2.5° scan; the beam was not aimed vertically.');
+  // Horizontal aim by the applicant's method: (a) the 0.2°D line, or (b) three vertical scans on the kerb side.
+  const H = RULES.horizontalAim;
+  if (design.aimMethod === 'threeLine') {
+    // A first pass with narrow scans finds the rising edge's slope. The second scans along strips that follow that
+    // slope ±0.4° across, which gathers far more rays for the same sharpness, so the inflections, and the aim the
+    // line through them gives, hold still between traces.
+    const first = H.threeLineH.map(h => ({ h: s * h, ...verticalScan(beam, s * h, -2, 2, 0.2) }));
+    const rough = fitLine(first).slope;
+    const scans = Number.isFinite(rough) ? H.threeLineH.map(h => ({ h: s * h, ...verticalScan(beam, s * h, -2, 2, 0.4, rough) })) : first;
+    if (scans.every(x => x.g >= H.minG && Number.isFinite(x.inflection))) {
+      const { mh, mv, slope } = fitLine(scans);
+      // Where the fitted line meets line B goes onto V-V.
+      if (Math.abs(slope) > 1e-6) beam.dh = -(mh + (RULES.lineB - mv) / slope);
+      else aim.notes.push('The three inflection points lie level, so the line through them never meets line B; the beam was not aimed sideways.');
+    } else aim.notes.push(`A scan at 1°, 2° or 3°${s > 0 ? 'R' : 'L'} found no gradient of ${H.minG}; the beam was not aimed sideways.`);
+    aim.method = 'three lines (Annex 6 §2.3.2.1 b)';
+  } else {
+    const line = horizontalScan(beam, H.lineAV, -5, 5, -s);
+    if (line.g >= H.minG) beam.dh = s * H.lineAH - line.inflection;
+    else aim.notes.push(`The 0.2°D line found no gradient of ${H.minG}; the beam was not aimed sideways.`);
+    aim.method = '0.2°D line (Annex 6 §2.3.2.1 a)';
   }
+  aim.dh = beam.dh;
+  // Aiming should move the beam only slightly; a large shift means the cut-off is not where the design intends.
+  if (Math.abs(aim.dv) > 0.25) aim.notes.push(`Aiming moved the beam ${Math.abs(aim.dv).toFixed(2)}° ${aim.dv > 0 ? 'up' : 'down'}: the cut-off sits away from the intended 0.57°D.`);
+  if (Math.abs(aim.dh) > 0.75) aim.notes.push(`Aiming moved the beam ${Math.abs(aim.dh).toFixed(2)}° sideways: the elbow sits away from V-V.`);
+  items.push(...cutoffQuality(beam, s));
+  return { aim, items };
+}
 
-  if (passing) {
-    // Minimum flux: 1,000 lm of objective source flux, or enough flux in Zones I and II of the aimed beam.
-    const F = RULES.flux;
-    const zoneI = beam.fluxIn(F.zoneI.h0, F.zoneI.h1, F.zoneI.v0, F.zoneI.v1), zoneII = beam.fluxIn(F.zoneII.h0, F.zoneII.h1, F.zoneII.v0, F.zoneII.v1);
-    const bySource = (design.ledFlux - F.objective) / F.objective;
-    const byZones = Math.min((zoneI - F.zoneI.min) / F.zoneI.min, (zoneII - F.zoneII.min) / F.zoneII.min);
-    const m = Math.max(bySource, byZones);
-    items.push({ id: 'Flux', group: 'flux', label: 'Minimum flux', requirement: `source ≥ ${F.objective} lm, or Zone I ≥ ${F.zoneI.min} lm and Zone II ≥ ${F.zoneII.min} lm`, value: bySource >= byZones ? design.ledFlux : zoneI, unit: 'lm', margin: m, error: 0, status: status(m), cite: RULES.fluxCite });
-  }
-
-  const worst = items.reduce((/** @type {Item | null} */ w, it) => (Number.isFinite(it.margin) && (w === null || it.margin < w.margin) ? it : w), null);
-  return { beamClass: design.beamClass, traffic: design.traffic, aim, items, pass: items.every(i => i.status === 'pass' || i.status === 'near'), worst, source: SOURCE };
+/** A least-squares line through scan inflections. @param {{ h: number, inflection: number }[]} xs */
+function fitLine(xs) {
+  const n = xs.length, mh = xs.reduce((a, x) => a + x.h, 0) / n, mv = xs.reduce((a, x) => a + x.inflection, 0) / n;
+  const sxx = xs.reduce((a, x) => a + (x.h - mh) ** 2, 0), sxy = xs.reduce((a, x) => a + (x.h - mh) * (x.inflection - mv), 0);
+  return { mh, mv, slope: sxy / sxx };
 }
 
 /**
- * Highest receiver intensity inside a polygon (aimed frame), sampled on a 0.1° × 0.05° lattice.
- * @param {Beam} beam @param {number[]} polygon
- * @returns {Measurement}
+ * Sharpness and linearity of a passing beam's cut-off, in the beam as it is now aimed (Annex 6 §2.2).
+ * @param {Beam} beam @param {number} s 1 for right-hand traffic, −1 for left
+ * @returns {Item[]}
  */
-function zoneMaximum(beam, polygon) {
-  let h0 = Infinity, h1 = -Infinity, v0 = Infinity, v1 = -Infinity;
-  for (let i = 0; i < polygon.length; i += 2) { h0 = Math.min(h0, polygon[i]); h1 = Math.max(h1, polygon[i]); v0 = Math.min(v0, polygon[i + 1]); v1 = Math.max(v1, polygon[i + 1]); }
-  let best = { value: 0, rays: 0 };
-  for (let v = v0; v <= v1 + 1e-9; v += 0.05) for (let h = h0; h <= h1 + 1e-9; h += 0.1) {
-    if (!inside(polygon, h, v)) continue;
-    const x = beam.measure(h, v, EXTREME_RAYS);
-    if (x.value > best.value) best = x;
-  }
-  return best;
+export function cutoffQuality(beam, s) {
+  const g = verticalScan(beam, s * RULES.sharpnessScanH, -4, 2).g;
+  const gm = Math.min((g - RULES.sharpness.min) / RULES.sharpness.min, (RULES.sharpness.max - g) / RULES.sharpness.max);
+  // Linearity: the inflection points at 1.5°, 2.5° and 3.5° lie within 0.2° of each other.
+  const inflections = RULES.linearity.h.map(h => verticalScan(beam, s * h, -3, 1.5).inflection);
+  const spread = Math.max(...inflections) - Math.min(...inflections);
+  const lm = (RULES.linearity.maxSpread - spread) / RULES.linearity.maxSpread;
+  return [
+    { id: 'Sharpness', group: 'cutoff', label: `Cut-off sharpness at 2.5°${s > 0 ? 'L' : 'R'}`, requirement: `G from ${RULES.sharpness.min} to ${RULES.sharpness.max}`, value: g, unit: 'G', margin: Number.isFinite(gm) ? gm : -1, error: 0, status: status(Number.isFinite(gm) ? gm : -1), cite: RULES.sharpnessCite, h: s * RULES.sharpnessScanH, v: RULES.lineB },
+    { id: 'Linearity', group: 'cutoff', label: 'Cut-off linearity, 1.5° to 3.5°', requirement: `inflections within ${RULES.linearity.maxSpread}°`, value: spread, unit: '°', margin: Number.isFinite(lm) ? lm : -1, error: 0, status: status(Number.isFinite(lm) ? lm : -1), cite: RULES.linearityCite },
+  ];
 }
 
-/** Point in polygon, counting the boundary as inside. @param {number[]} p @param {number} x @param {number} y */
-function inside(p, x, y) {
-  let c = false;
-  for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {
-    const xi = p[i], yi = p[i + 1], xj = p[j], yj = p[j + 1];
-    if ((yi > y) !== (yj > y) && x <= ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
-  }
-  return c;
+/**
+ * The minimum flux of a Class C or V passing beam: 1,000 lm of objective source flux, or enough flux in Zones I and
+ * II of the aimed beam (§4.5.3.2, Tables 3a and 3b).
+ * @param {Beam} beam @param {number} sourceFlux lumens, or 0 when unknown
+ * @returns {Item}
+ */
+export function fluxRule(beam, sourceFlux) {
+  const F = RULES.flux;
+  const zoneI = beam.fluxIn(F.zoneI.h0, F.zoneI.h1, F.zoneI.v0, F.zoneI.v1), zoneII = beam.fluxIn(F.zoneII.h0, F.zoneII.h1, F.zoneII.v0, F.zoneII.v1);
+  const bySource = sourceFlux > 0 ? (sourceFlux - F.objective) / F.objective : -Infinity;
+  const byZones = Math.min((zoneI - F.zoneI.min) / F.zoneI.min, (zoneII - F.zoneII.min) / F.zoneII.min);
+  const m = Math.max(bySource, byZones);
+  return { id: 'Flux', group: 'flux', label: 'Minimum flux', requirement: `source ≥ ${F.objective} lm, or Zone I ≥ ${F.zoneI.min} lm and Zone II ≥ ${F.zoneII.min} lm`, value: bySource >= byZones ? sourceFlux : zoneI, unit: 'lm', margin: m, error: 0, status: status(m), cite: RULES.fluxCite };
+}
+
+/**
+ * Evaluates a beam against R149 for one class and traffic side. The beam is aimed in place.
+ * @param {Beam} beam @param {EvaluationInput} design @param {EvaluationOptions} [options]
+ * @returns {Evaluation}
+ */
+export function evaluateBeam(beam, design, options = {}) {
+  const s = design.traffic === 'right' ? 1 : -1;
+  const passing = passingClass(design.beamClass);
+  /** @type {{ aim: Aim, items: Item[] }} */
+  let aimed;
+  if (options.aim === 'measured') {
+    beam.dh = options.shift?.dh ?? 0; beam.dv = options.shift?.dv ?? 0;
+    aimed = { aim: { dh: beam.dh, dv: beam.dv, method: 'as measured', notes: [] }, items: passing ? cutoffQuality(beam, s) : [] };
+  } else aimed = aimR149(beam, design);
+  const requirements = passing ? passingRequirements(/** @type {'C' | 'V'} */ (design.beamClass)) : drivingRequirements(/** @type {'A' | 'B'} */ (design.beamClass));
+  const items = [
+    ...aimed.items,
+    ...measureRequirements(beam, requirements, { mirror: s < 0, tolerance: passing ? 0 : RULES.drivingTolerance, passing }),
+  ];
+  if (passing) items.push(fluxRule(beam, design.ledFlux));
+  return { beamClass: design.beamClass, traffic: design.traffic, aim: aimed.aim, items, pass: meets(items), worst: weakest(items), source: SOURCE };
+}
+
+/**
+ * @param {EvaluationInput} design @param {Histogram[]} histograms @param {AngleConvention} convention
+ * @returns {Evaluation}
+ */
+export function evaluate(design, histograms, convention) {
+  return evaluateBeam(new Beam(histograms, convention), design);
 }

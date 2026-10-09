@@ -2,6 +2,14 @@
 
 /** @type {Record<string, string>} */
 export const ICONS = {
+  file: '<path d="M6.5 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10.5a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"/><path d="M13.5 3.5V8h4M9 12.5h6M9 16h6"/>',
+  info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.8v.2"/>',
+  car: '<path d="M4 15.5v-3l2-4.5h12l2 4.5v3"/><path d="M3.5 15.5h17v2.5h-17z"/><circle cx="7.5" cy="18.5" r="1.4"/><circle cx="16.5" cy="18.5" r="1.4"/><path d="M6 12.5h3M15 12.5h3"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="3"/>',
+  ruler: '<path d="M3.5 15.5 15.5 3.5l5 5-12 12z"/><path d="m7 12 2 2M10 9l2 2M13 6l2 2"/>',
+  cube: '<path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>',
+  contrast: '<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17a8.5 8.5 0 0 0 0-17Z" fill="currentColor" stroke="none"/>',
+  pin: '<path d="M12 21s6-5.6 6-11a6 6 0 0 0-12 0c0 5.4 6 11 6 11Z"/><circle cx="12" cy="10" r="2.2"/>',
   projector: '<circle cx="15" cy="12" r="5.5"/><path d="M9.5 12H4M4 8.5h3.5M4 15.5h3.5"/>',
   reflector: '<path d="M18 4c-7 1.5-11 5-11 8s4 6.5 11 8"/><circle cx="10.5" cy="12" r="1.3"/><path d="M13 12h7"/>',
   beam: '<path d="M3 15h8l3-4h7"/><path d="M3 18.5h18" opacity=".5"/>',

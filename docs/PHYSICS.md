@@ -6,7 +6,8 @@ tests follow these definitions. If the code and this page disagree, the code is 
 ## Scope
 
 Cutline traces light through a headlamp in three dimensions with geometric (ray) optics, and reports the far-field
-intensity distribution: candela in every direction. It checks that distribution against a regulation's test points,
+intensity distribution: candela in every direction. It also reads distributions measured or simulated elsewhere (IES
+and EULUMDAT files) into the same form, and places lamps on a vehicle model. It checks that distribution against a regulation's test points,
 zones and cut-off rules. It does not model:
 
 | Effect | Status |
@@ -199,12 +200,114 @@ A shade in front of the LED and a housing roof stop direct light that would leav
 
 ## Road
 
-The road view places two lamps 0.7 m either side of the car's centre line, at the design's mounting height, and
-tilts the beam down by the design's aim. A passing beam is first raised so that its cut-off, aimed by the laboratory
-to 0.57° down, sits on the horizon; a 1% aim then puts it back where the laboratory had it. At every point of the
-road Cutline gives the illuminance on a target there facing the car, I/d², summed over both lamps. That is the
-measure behind a headlamp's range: how far it lights an obstacle or a pedestrian to 1 lx or 3 lx. The road surface
-itself receives far less, because the light grazes it.
+The road picture places one lamp or a pair at a mounting height, a lateral spacing and a downward aim, and shows the
+light at every point of a flat road ahead, 0.25 m apart (0.5 m on a very large road). Two quantities are offered:
+
+| Quantity | Formula | Use |
+|---|---|---|
+| On a target facing the car | E = I / d² | A headlamp's range: how far it lights an obstacle or a pedestrian to 1 lx or 3 lx |
+| On the road surface | E = I · h / d³ (I cos θ / d², with cos θ = h/d) | The horizontal illuminance an isolux diagram of the road ("isoroad") shows; far smaller, because the light grazes the road |
+
+Here d is the distance from the lamp to the road point and h the mounting height. A road point at a depression angle
+V′ below the lamp is seen at V = V′ + aim in the lamp's frame.
+
+A passing beam aimed by a laboratory method first has its cut-off raised to the horizon: by 0.57° for R149, R149 00
+and R123 (line B), by 0.4° for an FMVSS VOL lower beam and by nothing for a VOR one. The vehicle's own downward aim
+then tilts it, so a 1% aim puts an R149 cut-off back where the laboratory had it. A beam checked as measured is not
+raised: its file is taken as the lamp sits on the vehicle.
+
+The lamp design workspace shows a pair 1.4 m apart, on a target facing the car. The photometry workspace lets the
+engineer choose all of these.
+
+## Imported light distributions
+
+The photometry workspace reads a light distribution measured on a goniophotometer, or exported by another optics
+tool, and checks it the way it checks a traced beam.
+
+**Formats.** IES LM-63, every edition (1986, 1991, 1995, 2002, 2019): candela values are multiplied by the file's
+candela multiplier and ballast factor, and, before LM-63-2002, by the ballast-lamp photometric factor. A lamp flux of
+−1 means absolute photometry. EULUMDAT (.ldt) always uses Type C and gives candela per 1,000 lm; Cutline converts with
+the first lamp set's flux. A file's own symmetry is expanded: an IES Type C file with planes 0–90°, 0–180° or 90–270°,
+or a single plane, and a Type A or B file with horizontal angles from 0° only, are mirrored out to the whole sphere.
+EULUMDAT symmetry indicators 0 to 4 are followed.
+
+**Angle systems.** A file states its photometric type, and the type says how its two angles are drawn. Cutline's own
+frame is the R149 goniometer's: a vertical polar axis, H the azimuth and V the elevation, so a direction is
+(cos V sin H, sin V, cos V cos H) with x to the right, y up and z along the lamp's axis.
+
+| File type | How Cutline reads it | The file's angles for a Cutline direction (dx, dy, dz) |
+|---|---|---|
+| Type A (IES 3) | Horizontal angle about a vertical axis, then elevation: Cutline's own frame | H = atan2(dx, dz), V = asin(dy) |
+| Type B (IES 2) | Tilt about a horizontal (left–right) axis, then the angle across within the tilted plane | H = asin(dx), V = atan2(dy, dz) |
+| Type C (IES 1, EULUMDAT) | γ from the nadir, C-plane about the vertical axis; the lamp's axis lies at γ = 90° in a chosen plane, with C growing to the left (seen from behind) unless set otherwise | γ = acos(−dy), C = C_axis + atan2(−dx, dz) |
+
+The literature does not agree on how Types A and B are drawn: vendor documents and summaries of IES LM-75 swap the
+roles of the two axes. Cutline takes Type A as the automotive goniometer of R149 Annex 4, whose outer axis is
+vertical, and Type B as the floodlight system with a horizontal polar axis. The two agree on the horizontal and vertical
+planes through the axis and differ off them: at 20°R 20°U a Type B file is read at 18.75° and 21.17°. When a file was
+written the other way, the design panel's Angles section overrides the type, sets the Type C axis plane and its
+direction, and mirrors left and right. A test pins each mapping.
+
+**Resampling.** The file is resampled into the same two far-field grids a trace fills, so every measurement, scan and
+picture works unchanged: a wide grid over the whole forward hemisphere (H ±90°, V ±90°, 0.25° bins) and a fine grid
+around the beam (H ±30°, V ±10°, 0.05° bins). A bin holds the file's intensity at its centre, by bilinear interpolation
+in the file's own angles, times its solid angle, and an infinite ray count, so its statistical error is zero. A bin
+outside the file's angles holds no rays: a test point there reads as no data, a line or zone that runs beyond the file
+is judged on the part the file covers and says so, and the picture draws those directions in a flat slate grey.
+Points read through R149's receiver, 0.149° across, as for a trace. A file whose angles are more than 1° apart is
+flagged: a cut-off or a hot spot narrower than that cannot be judged reliably.
+
+**Exporting a traced design.** The lamp design workspace writes its traced beam as an LM-63-2002 Type A file, as built
+(the laboratory's aim taken back out), at 0.1° steps across the fine grid and 0.5° beyond it. The values are the
+displayed candela, averaged over enough rays to follow the beam rather than its noise.
+
+## Illuminance on a screen
+
+The beam picture can show illuminance on a flat screen 25 m ahead, square to the lamp's axis, instead of intensity:
+E = I cos³ψ / d², with cos ψ = cos V cos H the cosine of the angle from the axis and d = 25 m. Targets given in lux are
+converted to candela at their centre in the same way.
+
+## Uniformity
+
+A beam is meant to change: it falls steeply at the cut-off and gently towards its edges. An engineer looking for
+unevenness wants what does not belong: stripes from facet joins, gaps between LED images, shadows of a shield or a
+bezel. Cutline compares each direction with four strips around it, along its row to the left and right and along its
+column above and below, each reaching the chosen feature size and leaving out the third of that reach nearest the
+direction, so a patch's own flanks do not count as its surroundings.
+
+- A direction darker than both strips along one axis is a **valley**; its ratio is its value over the darker strip,
+  the smaller of the two axes' ratios.
+- A direction brighter than both strips along an axis is a **ridge**, with its value over the brighter strip.
+- Any other direction sits on a slope and reads 1.
+
+A steady change, such as the cut-off, is darker on one side and brighter on the other, so it reads as even; the strips
+are one bin thick so the bright side of a cut-off cannot leak into the strips beside a direction just above it.
+Directions whose surroundings are all below the bottom of the colour scale are left out. A **dark patch** is a
+connected group of directions whose ratio is below 1 − depth; the uniformity study lists each patch with its darkest
+point, its depth, its value and its surroundings, its area and its extent, deepest first. Tests check that a cut-off
+and a gradient give no patch, and that a spot and a stripe are found where they are and as deep as they are.
+
+## The vehicle
+
+The vehicle workspace reads a triangle mesh (STL, OBJ or glTF) and places it in the **vehicle frame** of ISO 8855:
+x forwards, y to the left, z up, in millimetres, with x = 0 at the front-most point, y = 0 midway between the model's
+sides and z = 0 on the ground, a set distance below the model's lowest point (0 when the tyres are in the model). The
+model's units and its forward and up axes are set in the design panel; the default suits the SAE car-line system, with
+x rearwards and z up.
+
+Each lamp is a **centre of reference**, a direction its reference axis faces (forwards, rearwards, left or right), and
+an **apparent surface** taken as a rectangle of a given width and height, centred on the centre of reference and
+square to the axis. Heights and widths are read from that rectangle: its lowest and highest edges, and its edge
+farthest from the median plane. The **overall width** is the document's, or the model's when none is given; the
+model's includes the mirrors, which R48 §2.3.3 leaves out, so the checks say when they use it.
+
+**Visibility** is found by casting rays. The apparent surface is sampled every 25 mm across and 20 mm up (3 to 9 by 2
+to 5 points). Each sample point is first moved out to the exterior of the lens: the outermost surface of the model
+along the reference axis within 80 mm. From there a ray is cast towards the observer in each direction of the field,
+every 5° across and up and at its edges. A hit inside the lamp's own footprint, the prism its apparent surface sweeps
+along its axis, is the lamp itself and is passed through; any other hit hides that sample from that direction. Each
+direction reports the share of the apparent surface it sees. A bounding volume hierarchy over the triangles answers
+the rays, and a test checks it against a search of every triangle.
 
 ## Regulation
 
@@ -221,3 +324,8 @@ paragraph in the official text, and an evaluator turns a beam into margins. Its 
    signs and orthogonality.
 2. **Conservation and determinism:** every lumen accounted for through a full projector, and a trace split into chunks
    across workers equal to one uninterrupted trace.
+3. **Imported files:** an IES file reads back what was written; each angle system maps a known direction where this
+   page says; a Type C quadrant file and a EULUMDAT file expand and convert correctly; and a requirement outside a file
+   reads as no data.
+4. **Uniformity and the vehicle:** a cut-off is not a dark patch while a spot and a stripe are; the ray index agrees
+   with a search of every triangle; a lamp is not hidden by its own lens; and a fin beside a lamp hides it.

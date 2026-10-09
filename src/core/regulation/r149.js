@@ -5,16 +5,11 @@
  * Source: ECE/TRANS/WP.29/2022/93 (01 series, adopted June 2022, in force 4 January 2023) with the corrections in
  * ECE/TRANS/WP.29/1166 para. 143 and Supplements 1–7. Page numbers are the document's own. */
 
+/** @import { Requirement, PointRequirement } from './engine.js' */
+
 /**
  * @typedef {'C' | 'V' | 'B' | 'A'} BeamClass
  *   Passing beam Class C (a normal car headlamp) or V (lower output); driving beam Class B ("HR") or A ("R").
- * @typedef {{ kind: 'point', id: string, h: number, v: number, min?: number, max?: number, minOfImax?: number, cite: string }} PointRequirement
- * @typedef {{ kind: 'segment', id: string, v: number, h0: number, h1: number, min?: number, max?: number, cite: string }} SegmentRequirement
- * @typedef {{ kind: 'zone', id: string, polygon: number[], max: number, cite: string }} ZoneRequirement
- * @typedef {{ kind: 'sum', id: string, points: number[], min: number, cite: string }} SumRequirement
- * @typedef {{ kind: 'region-relative', id: string, vMax: number, h0: number, h1: number, factor: number, of: string, cite: string }} RelativeRequirement
- * @typedef {{ kind: 'imax', id: string, min?: number, max?: number, cite: string }} ImaxRequirement
- * @typedef {PointRequirement | SegmentRequirement | ZoneRequirement | SumRequirement | RelativeRequirement | ImaxRequirement} Requirement
  */
 
 export const SOURCE = {
@@ -31,6 +26,10 @@ const T5 = 'R149 01 series, Table 5 (p. 22)';
 /** Zone III, Table 6 Part C (p. 24): vertices in order, as [h, v, …]. */
 export const ZONE_III = [-8, 1, -8, 4, 8, 4, 8, 2, 6, 1.5, 1.5, 1.5, 0, 0, -4, 0];
 
+/** "Segment 10 and below": 4.5°L to 2°R, from line 10 (4°D) downwards. Table 6 Part A (p. 24) gives no lower edge;
+ * Cutline stops at 30°D, the edge of its wide grid, where the road is under the vehicle's own nose. */
+export const SEGMENT_10_AND_BELOW = [-4.5, -4, 2, -4, 2, -30, -4.5, -30];
+
 /**
  * Passing-beam requirements by class (right-hand traffic).
  * @param {'C' | 'V'} cls
@@ -42,25 +41,25 @@ export function passingRequirements(cls) {
   const out = [
     { kind: 'zone', id: 'Zone III', polygon: ZONE_III, max: 625, cite: T6C },
     { kind: 'point', id: 'BR', h: 2.5, v: 1, max: 1750, cite: T6 },
-    { kind: 'segment', id: 'Segment BLL', v: 0.57, h0: -20, h1: -8, max: 625, cite: T6 },
+    { kind: 'line', id: 'Segment BLL', h0: -20, v0: 0.57, h1: -8, v1: 0.57, max: 625, cite: T6 },
     { kind: 'point', id: 'B50L', h: -3.43, v: 0.57, max: 350, cite: T6 },
     { kind: 'point', id: 'P', h: -7, v: 0, min: 63, cite: T6 },
     { kind: 'point', id: '50L', h: -3.43, v: -0.86, min: C ? 5000 : 3550, max: 37000, cite: T6 },
     { kind: 'point', id: '50V', h: 0, v: -0.86, min: 5100, cite: T6 },
     { kind: 'point', id: '50R', h: 1.72, v: -0.86, min: C ? 10100 : 5100, cite: T6 },
-    { kind: 'segment', id: 'Segment 50', v: -0.86, h0: -6.84, h1: 6.84, min: C ? 2540 : 1800, cite: T6 },
-    { kind: 'segment', id: 'Segment 40LL', v: -1.07, h0: -14, h1: -9, min: C ? 850 : 600, cite: T6 },
+    { kind: 'line', id: 'Segment 50', h0: -6.84, v0: -0.86, h1: 6.84, v1: -0.86, min: C ? 2540 : 1800, cite: T6 },
+    { kind: 'line', id: 'Segment 40LL', h0: -14, v0: -1.07, h1: -9, v1: -1.07, min: C ? 850 : 600, cite: T6 },
     { kind: 'point', id: '40L', h: -9, v: -1.07, min: C ? 2800 : 1950, cite: T6 },
     { kind: 'point', id: '40R', h: 9, v: -1.07, min: C ? 2800 : 1950, cite: T6 },
-    { kind: 'segment', id: 'Segment 40RR', v: -1.07, h0: 9, h1: 14, min: C ? 850 : 600, cite: T6 },
+    { kind: 'line', id: 'Segment 40RR', h0: 9, v0: -1.07, h1: 14, v1: -1.07, min: C ? 850 : 600, cite: T6 },
     { kind: 'point', id: '25V', h: 0, v: -1.72, min: C ? 2500 : 1750, cite: T6 },
-    { kind: 'segment', id: 'Segment 25L', v: -1.72, h0: -16, h1: -9, min: C ? 1180 : 825, cite: T6 },
-    { kind: 'segment', id: 'Segment 25', v: -1.72, h0: -9, h1: 9, min: C ? 1700 : 1200, cite: T6 },
-    { kind: 'segment', id: 'Segment 25R', v: -1.72, h0: 9, h1: 16, min: C ? 1180 : 825, cite: T6 },
-    { kind: 'segment', id: 'Segment 15', v: -2.86, h0: -20, h1: 20, min: C ? 425 : 300, cite: T6 },
-    { kind: 'segment', id: 'Segment 10', v: -4, h0: -4.5, h1: 2, min: C ? 500 : 350, cite: T6 },
+    { kind: 'line', id: 'Segment 25L', h0: -16, v0: -1.72, h1: -9, v1: -1.72, min: C ? 1180 : 825, cite: T6 },
+    { kind: 'line', id: 'Segment 25', h0: -9, v0: -1.72, h1: 9, v1: -1.72, min: C ? 1700 : 1200, cite: T6 },
+    { kind: 'line', id: 'Segment 25R', h0: 9, v0: -1.72, h1: 16, v1: -1.72, min: C ? 1180 : 825, cite: T6 },
+    { kind: 'line', id: 'Segment 15', h0: -20, v0: -2.86, h1: 20, v1: -2.86, min: C ? 425 : 300, cite: T6 },
+    { kind: 'line', id: 'Segment 10', h0: -4.5, v0: -4, h1: 2, v1: -4, min: C ? 500 : 350, cite: T6 },
     // Class V's reference point is 25V, per the correction adopted with the 01 series (WP.29/1166 para. 143).
-    { kind: 'region-relative', id: 'Segment 10 and below', vMax: -4, h0: -4.5, h1: 2, factor: 0.8, of: C ? '50R' : '25V', cite: C ? 'R149 01 series, Table 6 Part A (p. 24)' : 'R149 01 series, Table 6 Part A (p. 24), corrected by WP.29/1166 para. 143' },
+    { kind: 'relative', id: 'Segment 10 and below', at: { kind: 'zone', polygon: SEGMENT_10_AND_BELOW }, factor: 0.8, of: C ? '50R' : '25V', bound: 'max', group: 'foreground', cite: C ? 'R149 01 series, Table 6 Part A (p. 24)' : 'R149 01 series, Table 6 Part A (p. 24), corrected by WP.29/1166 para. 143' },
   ];
   if (C) {
     out.splice(1, 0,
@@ -83,7 +82,7 @@ export function drivingRequirements(cls) {
   const p = /** @param {string} id @param {number} h @param {number} v @param {number} min */ (id, h, v, min) => /** @type {PointRequirement} */ ({ kind: 'point', id, h, v, min, cite: T5 });
   return [
     { kind: 'imax', id: 'Imax', min: B ? 40000 : 27000, max: 215000, cite: 'R149 01 series, Table 5 and §5.1.4.2 (p. 22)' },
-    { kind: 'point', id: 'H-V', h: 0, v: 0, minOfImax: 0.8, cite: 'R149 01 series, Table 5 and §5.1.4.1 (p. 22)' },
+    { kind: 'relative', id: 'H-V', at: { kind: 'point', h: 0, v: 0 }, factor: 0.8, of: 'imax', bound: 'min', cite: 'R149 01 series, Table 5 and §5.1.4.1 (p. 22)' },
     p('2U-V', 0, 2, B ? 1700 : 1000),
     p('H-12L', -12, 0, B ? 1500 : 600), p('H-9L', -9, 0, B ? 3400 : 2000), p('H-6L', -6, 0, B ? 5000 : 3400), p('H-3L', -3, 0, B ? 17500 : 12000),
     p('H-3R', 3, 0, B ? 17500 : 12000), p('H-6R', 6, 0, B ? 5000 : 3400), p('H-9R', 9, 0, B ? 3400 : 2000), p('H-12R', 12, 0, B ? 1500 : 600),

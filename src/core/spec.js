@@ -13,9 +13,11 @@
  * @typedef {{ kind: 'const', value: string | number }} ConstSpec
  * @typedef {{ kind: 'enum', label: string, values: string[], labels: Record<string, string>, help?: string }} EnumSpec
  * @typedef {{ kind: 'array', label: string, items: NumberSpec, minItems: number, maxItems: number }} ArraySpec
+ * @typedef {{ kind: 'list', label: string, items: ObjectSpec | StringSpec, maxItems: number, help?: string }} ListSpec
+ *   A list of records (or of short texts), such as the user's targets. The design panel gives lists their own editors.
  * @typedef {{ kind: 'object', label: string, fields: Record<string, Spec> }} ObjectSpec
  * @typedef {{ kind: 'union', label: string, tag: string, variants: Record<string, ObjectSpec>, labels: Record<string, string> }} UnionSpec
- * @typedef {NumberSpec | StringSpec | ConstSpec | EnumSpec | ArraySpec | ObjectSpec | UnionSpec} Spec
+ * @typedef {NumberSpec | StringSpec | ConstSpec | EnumSpec | ArraySpec | ListSpec | ObjectSpec | UnionSpec} Spec
  */
 
 /** @param {string} label @param {string} unit @param {number} min @param {number} max @param {Partial<NumberSpec>} [extra] @returns {NumberSpec} */
@@ -36,6 +38,11 @@ export const union = (label, tag, variants) => ({
 });
 /** @param {string} label @param {NumberSpec} items @param {number} minItems @param {number} maxItems @returns {ArraySpec} */
 export const array = (label, items, minItems, maxItems) => ({ kind: 'array', label, items, minItems, maxItems });
+
+/** @param {string} label @param {ObjectSpec | StringSpec} items @param {number} maxItems @param {string} [help] @returns {ListSpec} */
+export const list = (label, items, maxItems, help) => ({ kind: 'list', label, items, maxItems, ...(help ? { help } : {}) });
+/** @param {string} label @param {string} [help] @returns {EnumSpec} */
+export const flag = (label, help) => ({ kind: 'enum', label, values: ['no', 'yes'], labels: { no: 'No', yes: 'Yes' }, ...(help ? { help } : {}) });
 
 /** Display helpers. */
 export const MM = { unit: 'mm', factor: 1000, digits: 1 };
@@ -97,6 +104,11 @@ export function validate(spec, value, path = '') {
       }
       return value.map((item, i) => validate(spec.items, item, `${path}[${i}]`));
     }
+    case 'list': {
+      if (!Array.isArray(value)) throw new ValidationError(path, 'must be a list');
+      if (value.length > spec.maxItems) throw new ValidationError(path, `must have at most ${spec.maxItems} entries`);
+      return value.map((item, i) => validate(spec.items, item, `${path}[${i}]`));
+    }
     case 'object': return validateObject(spec, value, path);
     case 'union': {
       if (!isPlainObject(value)) throw new ValidationError(path, 'must be an object');
@@ -153,6 +165,7 @@ export function toJsonSchema(spec) {
     case 'const': return { const: spec.value };
     case 'enum': return { enum: spec.values, description: describe(spec.label, '', spec.help) };
     case 'array': return { type: 'array', items: toJsonSchema(spec.items), minItems: spec.minItems, maxItems: spec.maxItems, description: spec.label };
+    case 'list': return { type: 'array', items: toJsonSchema(spec.items), maxItems: spec.maxItems, description: describe(spec.label, '', spec.help) };
     case 'object': return objectSchema(spec);
     case 'union': return {
       description: spec.label,
@@ -188,6 +201,13 @@ export function specAt(spec, value, path) {
       const tag = isPlainObject(node) ? node[current.tag] : undefined;
       current = typeof tag === 'string' ? current.variants[tag] ?? null : null;
       if (!current) return null;
+    }
+    // A list entry, addressed by its index.
+    if (current.kind === 'list') {
+      if (!/^\d+$/.test(key) || !Array.isArray(node) || Number(key) >= node.length) return null;
+      current = current.items;
+      node = node[Number(key)];
+      continue;
     }
     if (current.kind !== 'object' || !Object.hasOwn(current.fields, key)) return null;
     current = current.fields[key];

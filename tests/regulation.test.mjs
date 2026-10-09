@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { passingRequirements, drivingRequirements, RULES } from '../src/core/regulation/r149.js';
-import { evaluate, Beam, verticalScan, mirrorLabel } from '../src/core/regulation/evaluate.js';
+import { evaluate, Beam, verticalScan } from '../src/core/regulation/evaluate.js';
+import { mirrorLabel } from '../src/core/regulation/engine.js';
 import { GRIDS } from '../src/core/lamp.js';
 import { gridSize } from '../src/core/tracer.js';
 import { binSolidAngle } from '../src/core/photometry.js';
@@ -45,7 +46,7 @@ test('every R149 requirement cites the 01 series text', () => {
 });
 
 test('Class V foreground limit follows the adopted correction: 0.8 × 25V, while Class C keeps 50R', () => {
-  const rel = cls => passingRequirements(cls).find(r => r.kind === 'region-relative');
+  const rel = cls => passingRequirements(cls).find(r => r.id === 'Segment 10 and below');
   assert.equal(rel('C').of, '50R');
   assert.equal(rel('V').of, '25V');
   assert.match(rel('V').cite, /WP\.29\/1166/);

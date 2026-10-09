@@ -21,3 +21,19 @@ export function binSolidAngle(h0, h1, v0, v1, convention) {
   }
   return sum * dh * RAD * dv * RAD;
 }
+
+/** Iso-candela levels the beam view draws for a headlamp, in candela. */
+export const CONTOUR_LEVELS = [100, 500, 1000, 5000, 10000, 20000, 40000, 80000];
+
+/** The screen distance for illuminance pictures, in metres: the distance R149 measures at. */
+export const SCREEN_DISTANCE = 25;
+
+/**
+ * Illuminance on a flat screen at SCREEN_DISTANCE, square to the lamp's axis, from intensity in the direction (h, v)
+ * of the goniometer frame: E = I cos³ψ / d², where cos ψ = cos V cos H is the cosine of the angle to the axis.
+ * @param {number} cd @param {number} h @param {number} v
+ */
+export function screenLux(cd, h, v) {
+  const c = Math.cos(h * RAD) * Math.cos(v * RAD);
+  return c > 0 ? (cd * c * c * c) / (SCREEN_DISTANCE * SCREEN_DISTANCE) : 0;
+}

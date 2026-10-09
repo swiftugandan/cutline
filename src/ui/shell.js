@@ -6,7 +6,8 @@ import { hydrateIcons } from './icons.js';
 /**
  * A user command. Every button, palette entry and shortcut runs one of these.
  * @typedef {{ id: string, label: string, icon?: string, shortcut?: string, run: () => void | Promise<void>,
- *   enabled?: () => boolean, pressed?: () => boolean, hint?: string, palette?: boolean }} Command
+ *   enabled?: () => boolean, pressed?: () => boolean, hint?: string, palette?: boolean, workspace?: string }} Command
+ *   workspace: the workspace a command belongs to; it runs only while that workspace is active.
  */
 
 /**
@@ -21,6 +22,8 @@ export class Commands {
     this.map = new Map();
     /** @type {(() => void) | null} Called after every command, so pressed and enabled states stay current. */
     this.onRun = null;
+    /** Whether a command applies now; the shell refuses a workspace's commands while another is active. @type {(id: string) => boolean} */
+    this.allowed = () => true;
   }
 
   /** @param {Command[]} list */
@@ -32,7 +35,7 @@ export class Commands {
   /** @param {string} id */
   async run(id) {
     const command = this.map.get(id);
-    if (!command || (command.enabled && !command.enabled())) return;
+    if (!command || !this.allowed(id) || (command.enabled && !command.enabled())) return;
     await command.run();
     this.onRun?.();
   }
@@ -73,7 +76,7 @@ export class Ribbon {
   refresh() {
     for (const button of /** @type {NodeListOf<HTMLButtonElement>} */ (document.querySelectorAll('[data-cmd]'))) {
       const command = this.commands.get(button.dataset.cmd ?? '');
-      if (!command) continue;
+      if (!command || !this.commands.allowed(command.id)) continue;
       button.disabled = command.enabled ? !command.enabled() : false;
       if (command.pressed) button.setAttribute('aria-pressed', String(command.pressed()));
     }
@@ -175,9 +178,9 @@ export class Dialogs {
 
   /**
    * Ctrl+K: type to filter commands, Enter to run.
-   * @param {Commands} commands
+   * @param {Commands} commands @param {(id: string) => boolean} available the commands that apply now
    */
-  palette(commands) {
+  palette(commands, available) {
     const el = this.el;
     el.className = 'dialog palette';
     const input = h('input', { placeholder: 'Find a command', 'aria-label': 'Find a command', role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'paletteList' });
@@ -188,7 +191,7 @@ export class Dialogs {
     let matches = [];
     const render = () => {
       const q = input.value.trim().toLowerCase();
-      matches = [...commands.map.values()].filter(c => c.palette !== false && (!c.enabled || c.enabled()) && (!q || c.label.toLowerCase().includes(q) || c.id.includes(q)));
+      matches = [...commands.map.values()].filter(c => c.palette !== false && available(c.id) && (!c.enabled || c.enabled()) && (!q || c.label.toLowerCase().includes(q) || c.id.includes(q)));
       index = Math.min(index, Math.max(0, matches.length - 1));
       list.replaceChildren(...(matches.length ? matches.map((c, i) => {
         const item = h('button', { class: 'palette-item', type: 'button', role: 'option', 'aria-selected': String(i === index) }, [c.icon ? h('span', { 'data-icon': c.icon }) : h('span', { 'data-icon': 'chevron-right' }), c.label, c.shortcut ? h('kbd', { text: c.shortcut }) : null]);
@@ -209,11 +212,11 @@ export class Dialogs {
     input.focus();
   }
 
-  /** @param {[string, string][]} shortcuts */
-  help(shortcuts) {
+  /** @param {[string, string][]} shortcuts @param {string} workspace the active workspace's name */
+  help(shortcuts, workspace) {
     const table = h('table', { class: 'shortcut-table' }, [h('tbody', {}, shortcuts.map(([action, keys]) => h('tr', {}, [h('td', { text: action }), h('td', { text: keys })])))]);
     const intro = h('p', {});
-    intro.innerHTML = `Cutline traces light through a headlamp and checks the beam against the regulation. Change any value on the right and the beam is traced again. Drag a field's label to scrub its value. ${escapeHtml('Designs are kept in this browser; download a copy to keep it safe.')}`;
+    intro.innerHTML = escapeHtml(`Cutline has three workspaces, switched at the top left. Lamp design traces light through a headlamp and checks it against UN R149. Photometry opens a light distribution file and checks it against every market and your own targets. Vehicle places lamps on a vehicle model and checks where they sit. You are in ${workspace}. Every document is kept in this browser; download a copy to keep it safe.`);
     return this.open({ title: 'Help and keyboard shortcuts', body: [intro, table], actions: [{ label: 'Done', value: 'ok', primary: true }] });
   }
 }

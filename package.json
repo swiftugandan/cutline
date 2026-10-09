@@ -1,6 +1,6 @@
 {
   "name": "cutline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Design car headlamps in the browser: LED projectors and reflectors traced to UN R149.",
   "type": "module",

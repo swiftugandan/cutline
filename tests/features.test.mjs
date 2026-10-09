@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { indexAt, dispersionFactor, sampleWavelength } from '../src/core/spectrum.js';
 import { refractOrReflect, trace, TEXTURE_K } from '../src/core/tracer.js';
 import { Rng } from '../src/core/rng.js';
-import { roadIlluminance, LAMP_SPACING } from '../src/core/road.js';
+import { roadIlluminance, designRoad, LAMP_SPACING } from '../src/core/road.js';
 import { displayCandela } from '../src/core/analysis.js';
 import { binSolidAngle } from '../src/core/photometry.js';
 import { gridSize } from '../src/core/tracer.js';
@@ -69,9 +69,16 @@ test('a lens\'s sign-light strip turns only the light below its height upwards, 
 
 test('the road gives the light on a target facing the car: I/d² from both lamps', () => {
   const d = defaultDesign();
-  const r = roadIlluminance(d, () => 10000, { xMin: 0, xMax: 0, zMin: 50, zMax: 50, step: 1 });
-  const dist = Math.hypot(LAMP_SPACING, d.mounting.height, 50);
+  const r = roadIlluminance(designRoad(d), () => 10000, { xMin: 0, xMax: 0, zMin: 50, zMax: 50, step: 1 });
+  const dist = Math.hypot(LAMP_SPACING / 2, d.mounting.height, 50);
   near(r.lux[0], (2 * 10000) / (dist * dist), 1e-9, 'two lamps at 50 m');
+});
+
+test('on the road surface the light grazes: I·height/d³, from the lamps chosen', () => {
+  const setup = { height: 0.7, aimPercent: 0, spacing: 1.4, lamps: /** @type {const} */ ('left'), surface: /** @type {const} */ ('road'), length: 100, width: 20 };
+  const r = roadIlluminance(setup, () => 10000, { xMin: -0.7, xMax: -0.7, zMin: 30, zMax: 30, step: 1 });
+  const dist = Math.hypot(0.7, 30);
+  near(r.lux[0], (10000 * 0.7) / dist ** 3, 1e-9, 'the left lamp alone, straight ahead of it at 30 m');
 });
 
 test('the displayed beam averages over enough rays without biasing a uniform field', () => {

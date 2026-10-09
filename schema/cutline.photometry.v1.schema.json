@@ -1,0 +1,560 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:cutline:schema:photometry:v1",
+  "title": "Cutline photometry study",
+  "type": "object",
+  "description": "A light distribution file and what the engineer decided about it: how its angles map, what the lamp is, the markets to check, the engineer's targets, the road and the pictures. Angles are degrees, the road is metres. Cross-field rules are listed in docs/SCHEMA.md and checked by the loader.",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "id",
+    "title",
+    "notes",
+    "source",
+    "mapping",
+    "lamp",
+    "conditions",
+    "markets",
+    "targets",
+    "road",
+    "display"
+  ],
+  "properties": {
+    "format": {
+      "const": "cutline.photometry"
+    },
+    "version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Identifier"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 160,
+      "description": "Title"
+    },
+    "notes": {
+      "type": "string",
+      "maxLength": 20000,
+      "description": "Notes"
+    },
+    "source": {
+      "type": "object",
+      "description": "Light distribution",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "text"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 260,
+          "description": "File name"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 50331648,
+          "description": "File contents"
+        }
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "description": "Angles",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "axisC",
+        "cTurn",
+        "mirror"
+      ],
+      "properties": {
+        "system": {
+          "enum": [
+            "file",
+            "A",
+            "B",
+            "C"
+          ],
+          "description": "Photometry type. How the file's angles are drawn. Type A: horizontal angle about a vertical axis, then elevation (the R149 goniometer). Type B: tilt about a horizontal axis, then the angle across. Type C: angle from the nadir in planes about the vertical axis"
+        },
+        "axisC": {
+          "type": "integer",
+          "description": "Lamp axis plane (°). For Type C: the C-plane that holds the lamp's axis, at γ = 90°",
+          "minimum": 0,
+          "maximum": 359
+        },
+        "cTurn": {
+          "enum": [
+            "left",
+            "right"
+          ],
+          "description": "C grows towards. For Type C: the side the C angle grows towards, seen from behind the lamp"
+        },
+        "mirror": {
+          "enum": [
+            "no",
+            "yes"
+          ],
+          "description": "Mirror left and right. Swaps left and right, for a file measured from the other side"
+        }
+      }
+    },
+    "lamp": {
+      "type": "object",
+      "description": "Lamp",
+      "additionalProperties": false,
+      "required": [
+        "role",
+        "traffic",
+        "otherTraffic",
+        "outward",
+        "aim",
+        "shiftH",
+        "shiftV",
+        "aimMethod",
+        "sourceFlux"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "passing",
+            "driving",
+            "front-position",
+            "rear-position",
+            "end-outline",
+            "parking",
+            "drl",
+            "stop",
+            "high-mounted-stop",
+            "turn-front",
+            "turn-rear",
+            "turn-side",
+            "side-marker",
+            "reversing",
+            "rear-fog"
+          ],
+          "description": "Function. What the lamp is. It decides which requirements of each market apply"
+        },
+        "traffic": {
+          "enum": [
+            "right",
+            "left"
+          ],
+          "description": "Made for. The traffic side this headlamp is designed for"
+        },
+        "otherTraffic": {
+          "enum": [
+            "mirror",
+            "as-is"
+          ],
+          "description": "For the other traffic side. A headlamp for the other traffic side is usually the mirror image of this one. Check it as it is for a lamp that serves both sides"
+        },
+        "outward": {
+          "enum": [
+            "right",
+            "left"
+          ],
+          "description": "Outward is. Which side of the file faces away from the vehicle's centre line. Signal lamp requirements are written with H positive outwards"
+        },
+        "aim": {
+          "enum": [
+            "laboratory",
+            "measured"
+          ],
+          "description": "Aim. As the laboratory aims it: each market aims the beam by its own method, such as by the cut-off. As measured: the file's own axis, moved by the shifts below"
+        },
+        "shiftH": {
+          "type": "number",
+          "description": "Move right (°). Moves the beam to the right (negative: left) when it is checked as measured",
+          "minimum": -10,
+          "maximum": 10
+        },
+        "shiftV": {
+          "type": "number",
+          "description": "Move up (°). Moves the beam up (negative: down) when it is checked as measured",
+          "minimum": -10,
+          "maximum": 10
+        },
+        "aimMethod": {
+          "enum": [
+            "line02D",
+            "threeLine"
+          ],
+          "description": "R149 horizontal aim. How the R149 laboratory aims a passing beam sideways (Annex 6 §2.3.2.1); the applicant chooses"
+        },
+        "sourceFlux": {
+          "type": "number",
+          "description": "Source flux (lm). The light source's objective flux, for R149's minimum-flux rule. 0 when not known: the rule then uses the flux in Zones I and II",
+          "minimum": 0,
+          "maximum": 100000
+        }
+      }
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 64,
+        "description": "Condition"
+      },
+      "maxItems": 64,
+      "description": "Conditions. Facts about the lamp that decide which requirements apply, such as a mounting height below 750 mm"
+    },
+    "markets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "Market",
+        "additionalProperties": false,
+        "required": [
+          "pack",
+          "fn",
+          "traffic"
+        ],
+        "properties": {
+          "pack": {
+            "type": "string",
+            "maxLength": 32,
+            "pattern": "^[a-z0-9-]+$",
+            "description": "Regulation"
+          },
+          "fn": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "Function"
+          },
+          "traffic": {
+            "enum": [
+              "right",
+              "left"
+            ],
+            "description": "Traffic"
+          }
+        }
+      },
+      "maxItems": 60,
+      "description": "Markets"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "description": "Target",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "shape",
+          "h0",
+          "v0",
+          "h1",
+          "v1",
+          "limit",
+          "min",
+          "max",
+          "unit"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "Name"
+          },
+          "shape": {
+            "enum": [
+              "point",
+              "line",
+              "zone"
+            ],
+            "description": "Shape"
+          },
+          "h0": {
+            "type": "number",
+            "description": "H (°)",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "v0": {
+            "type": "number",
+            "description": "V (°)",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "h1": {
+            "type": "number",
+            "description": "H to (°)",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "v1": {
+            "type": "number",
+            "description": "V to (°)",
+            "minimum": -90,
+            "maximum": 90
+          },
+          "limit": {
+            "enum": [
+              "min",
+              "max",
+              "range"
+            ],
+            "description": "Limit"
+          },
+          "min": {
+            "type": "number",
+            "description": "Minimum",
+            "minimum": 0,
+            "maximum": 10000000
+          },
+          "max": {
+            "type": "number",
+            "description": "Maximum",
+            "minimum": 0,
+            "maximum": 10000000
+          },
+          "unit": {
+            "enum": [
+              "cd",
+              "lx"
+            ],
+            "description": "Unit"
+          }
+        }
+      },
+      "maxItems": 200,
+      "description": "Targets"
+    },
+    "road": {
+      "type": "object",
+      "description": "Road",
+      "additionalProperties": false,
+      "required": [
+        "surface",
+        "lamps",
+        "height",
+        "spacing",
+        "aimPercent",
+        "length",
+        "width"
+      ],
+      "properties": {
+        "surface": {
+          "enum": [
+            "road",
+            "target"
+          ],
+          "description": "Light on. The road surface shows the horizontal illuminance an isolux road diagram uses; a target facing the car shows how far the lamps light an obstacle"
+        },
+        "lamps": {
+          "enum": [
+            "pair",
+            "left",
+            "right"
+          ],
+          "description": "Lamps"
+        },
+        "height": {
+          "type": "number",
+          "description": "Mounting height (m)",
+          "minimum": 0.2,
+          "maximum": 4
+        },
+        "spacing": {
+          "type": "number",
+          "description": "Lamp spacing (m). Between the centres of the two lamps",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "aimPercent": {
+          "type": "number",
+          "description": "Downward aim (%). Inclination of the beam on the vehicle. A laboratory-aimed passing beam is first raised so its cut-off is level",
+          "minimum": -5,
+          "maximum": 5
+        },
+        "length": {
+          "type": "number",
+          "description": "Road length (m)",
+          "minimum": 20,
+          "maximum": 400
+        },
+        "width": {
+          "type": "number",
+          "description": "Road width (m)",
+          "minimum": 10,
+          "maximum": 100
+        }
+      }
+    },
+    "display": {
+      "type": "object",
+      "description": "Display",
+      "additionalProperties": false,
+      "required": [
+        "beam",
+        "road"
+      ],
+      "properties": {
+        "beam": {
+          "type": "object",
+          "description": "Beam picture",
+          "additionalProperties": false,
+          "required": [
+            "quantity",
+            "scale",
+            "auto",
+            "min",
+            "max",
+            "palette",
+            "contours",
+            "mode",
+            "featureDeg",
+            "depth"
+          ],
+          "properties": {
+            "quantity": {
+              "enum": [
+                "intensity",
+                "illuminance"
+              ],
+              "description": "Show. Illuminance on a flat screen 25 m ahead, square to the lamp's axis"
+            },
+            "scale": {
+              "enum": [
+                "log",
+                "linear"
+              ],
+              "description": "Scale. A log scale shows the whole beam, from the faint glare zones to the hot spot; a linear scale shows differences within the bright part"
+            },
+            "auto": {
+              "enum": [
+                "no",
+                "yes"
+              ],
+              "description": "Fit the range. Fit the colour range to the beam"
+            },
+            "min": {
+              "type": "number",
+              "description": "Bottom of the scale. In the unit shown",
+              "minimum": 0,
+              "maximum": 10000000
+            },
+            "max": {
+              "type": "number",
+              "description": "Top of the scale. In the unit shown",
+              "minimum": 0,
+              "maximum": 10000000
+            },
+            "palette": {
+              "enum": [
+                "night",
+                "heat",
+                "spectrum",
+                "grey"
+              ],
+              "description": "Palette. Night shows light on a dark wall; false colour changes hue quickly, so small differences in an even area show"
+            },
+            "contours": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "description": "Level",
+                "minimum": 0,
+                "maximum": 10000000
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "description": "Contour levels"
+            },
+            "mode": {
+              "enum": [
+                "light",
+                "uniformity"
+              ],
+              "description": "Colour by. Uniformity colours each direction by its intensity against the average around it, so dark patches and stripes stand out"
+            },
+            "featureDeg": {
+              "type": "number",
+              "description": "Feature size (°). How far around each direction the average reaches: about the size of the patches to find",
+              "minimum": 0.2,
+              "maximum": 10
+            },
+            "depth": {
+              "type": "number",
+              "description": "Dark patch depth (%). How far below its surroundings a patch must fall to be listed",
+              "minimum": 0.05,
+              "maximum": 0.9
+            }
+          }
+        },
+        "road": {
+          "type": "object",
+          "description": "Road picture",
+          "additionalProperties": false,
+          "required": [
+            "scale",
+            "auto",
+            "min",
+            "max",
+            "palette",
+            "contours"
+          ],
+          "properties": {
+            "scale": {
+              "enum": [
+                "log",
+                "linear"
+              ],
+              "description": "Scale. A log scale shows the whole beam, from the faint glare zones to the hot spot; a linear scale shows differences within the bright part"
+            },
+            "auto": {
+              "enum": [
+                "no",
+                "yes"
+              ],
+              "description": "Fit the range. Fit the colour range to the road"
+            },
+            "min": {
+              "type": "number",
+              "description": "Bottom of the scale (lx)",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "max": {
+              "type": "number",
+              "description": "Top of the scale (lx)",
+              "minimum": 0,
+              "maximum": 1000000
+            },
+            "palette": {
+              "enum": [
+                "night",
+                "heat",
+                "spectrum",
+                "grey"
+              ],
+              "description": "Palette. Night shows light on a dark wall; false colour changes hue quickly, so small differences in an even area show"
+            },
+            "contours": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "description": "Level",
+                "minimum": 0,
+                "maximum": 10000000
+              },
+              "minItems": 0,
+              "maxItems": 16,
+              "description": "Contour levels"
+            }
+          }
+        }
+      }
+    }
+  }
+}

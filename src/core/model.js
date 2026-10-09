@@ -5,7 +5,7 @@ import { number, string, constant, choice, object, union, validate, ValidationEr
 
 export const FORMAT = 'cutline.design';
 export const FORMAT_VERSION = 1;
-export const APP_VERSION = '0.1.0';
+export const APP_VERSION = '0.2.0';
 
 /**
  * @typedef {{ flux: number, width: number, height: number, offset: number }} Led

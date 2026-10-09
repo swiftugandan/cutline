@@ -1,9 +1,6 @@
-/** The design store: one document, labelled transactions, and undo/redo built from leaf patches. Every commit is
- * validated; a commit that breaks a rule rolls back atomically and leaves history untouched. */
-
-import { validateDesign } from './model.js';
-
-/** @import { Design } from './model.js' */
+/** The document store: one document, labelled transactions, and undo/redo built from leaf patches. Every commit is
+ * validated; a commit that breaks a rule rolls back atomically and leaves history untouched. Each workspace keeps its
+ * own store: the lamp design, the photometry study and the vehicle. */
 
 /** @typedef {{ path: string[], before: unknown, after: unknown }} Patch */
 /** @typedef {{ label: string, patches: Patch[], bytes: number }} Command */
@@ -42,12 +39,17 @@ export function applyPatches(doc, patches, forward) {
   }
 }
 
-export class DesignStore extends EventTarget {
-  /** @param {Design} design @param {{ maxCommands?: number, maxBytes?: number }} [limits] */
-  constructor(design, { maxCommands = 200, maxBytes = 24 * 1024 * 1024 } = {}) {
+/** @template T */
+export class DocumentStore extends EventTarget {
+  /**
+   * @param {T} doc @param {(raw: unknown) => T} validate checks a whole document and returns a clean copy, or throws
+   * @param {{ maxCommands?: number, maxBytes?: number }} [limits]
+   */
+  constructor(doc, validate, { maxCommands = 200, maxBytes = 24 * 1024 * 1024 } = {}) {
     super();
-    /** @type {Design} */
-    this.design = validateDesign(design);
+    this.validate = validate;
+    /** @type {T} */
+    this.doc = validate(doc);
     /** @type {Command[]} */
     this.undoStack = [];
     /** @type {Command[]} */
@@ -56,7 +58,7 @@ export class DesignStore extends EventTarget {
     this.maxBytes = maxBytes;
     this.bytes = 0;
     this.revision = 0;
-    /** @type {{ label: string, before: Design } | null} */
+    /** @type {{ label: string, before: T } | null} */
     this.pending = null;
   }
 
@@ -67,10 +69,10 @@ export class DesignStore extends EventTarget {
     this.dispatchEvent(new CustomEvent('change', { detail }));
   }
 
-  /** Starts a transaction. Edits to `design` until commit or cancel become one history entry. @param {string} label */
+  /** Starts a transaction. Edits to `doc` until commit or cancel become one history entry. @param {string} label */
   begin(label) {
     if (this.pending) throw new Error('A transaction is already in progress.');
-    this.pending = { label, before: structuredClone(this.design) };
+    this.pending = { label, before: structuredClone(this.doc) };
   }
 
   /** Tells listeners about an uncommitted edit, for example during a drag. */
@@ -84,13 +86,13 @@ export class DesignStore extends EventTarget {
     if (!pending) return false;
     this.pending = null;
     try {
-      this.design = validateDesign(this.design);
+      this.doc = this.validate(this.doc);
     } catch (error) {
-      this.design = pending.before;
+      this.doc = pending.before;
       this.notify('rollback', pending.label);
       throw error;
     }
-    const patches = diff(pending.before, this.design);
+    const patches = diff(pending.before, this.doc);
     if (!patches.length) return false;
     const command = { label: pending.label, patches, bytes: JSON.stringify(patches).length * 2 };
     this.undoStack.push(command);
@@ -104,10 +106,10 @@ export class DesignStore extends EventTarget {
     return true;
   }
 
-  /** Abandons the pending transaction and restores the design as it was. */
+  /** Abandons the pending transaction and restores the document as it was. */
   cancel() {
     if (!this.pending) return;
-    this.design = this.pending.before;
+    this.doc = this.pending.before;
     const label = this.pending.label;
     this.pending = null;
     this.notify('rollback', label);
@@ -115,11 +117,11 @@ export class DesignStore extends EventTarget {
 
   /**
    * Runs `mutate` as one transaction.
-   * @param {string} label @param {(design: Design) => void} mutate
+   * @param {string} label @param {(doc: T) => void} mutate
    */
   transact(label, mutate) {
     this.begin(label);
-    try { mutate(this.design); } catch (error) { this.cancel(); throw error; }
+    try { mutate(this.doc); } catch (error) { this.cancel(); throw error; }
     return this.commit();
   }
 
@@ -132,7 +134,7 @@ export class DesignStore extends EventTarget {
     if (this.pending) this.cancel();
     const command = this.undoStack.pop();
     if (!command) return;
-    applyPatches(/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (this.design)), command.patches, false);
+    applyPatches(/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (this.doc)), command.patches, false);
     this.redoStack.push(command);
     this.bytes -= command.bytes;
     this.revision++;
@@ -143,16 +145,16 @@ export class DesignStore extends EventTarget {
     if (this.pending) this.cancel();
     const command = this.redoStack.pop();
     if (!command) return;
-    applyPatches(/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (this.design)), command.patches, true);
+    applyPatches(/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (this.doc)), command.patches, true);
     this.undoStack.push(command);
     this.bytes += command.bytes;
     this.revision++;
     this.notify('redo', command.label);
   }
 
-  /** Replaces the whole design (open, new) and clears history. @param {Design} design */
-  replace(design) {
-    this.design = validateDesign(design);
+  /** Replaces the whole document (open, new) and clears history. @param {T} doc */
+  replace(doc) {
+    this.doc = this.validate(doc);
     this.pending = null;
     this.undoStack = [];
     this.redoStack = [];

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <meta name="theme-color" content="#0b0d11">
-<title>Cutline: design a headlamp beam and check it against UN R149</title>
-<meta name="description" content="Cutline is a free browser app for designing car headlamps. It traces LED projectors and multi-facet reflectors ray by ray, aims the beam the way an approval laboratory does, and measures every requirement of UN Regulation No. 149.">
+<title>Cutline: design, check and install car lamps against every market</title>
+<meta name="description" content="Cutline is a free browser app for car lamp engineers. It traces headlamps ray by ray against UN R149, checks IES and EULUMDAT files against UN, US, Canadian, Taiwanese and Indian rules and your own targets, and checks lamp positions on a vehicle against UN R48 and FMVSS 108.">
 <link rel="icon" href="{{favicon}}" type="image/svg+xml">
 <style>
 @font-face { font-family: "Barlow"; src: url("./fonts/barlow-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
@@ -190,7 +190,7 @@ footer a { color: var(--on-night-muted); }
   <div class="shade" aria-hidden="true"></div>
   <div class="wrap">
     <h1 id="hero-title">Design the beam. Check it against R149.</h1>
-    <p class="lede">Cutline traces light through an LED projector or a reflector, ray by ray. It aims the beam the way an approval laboratory does and measures every point, line and zone of UN Regulation No. 149. It runs in your browser, and your design stays on your computer.</p>
+    <p class="lede">Cutline traces light through an LED projector or a reflector, ray by ray. It aims the beam the way an approval laboratory does and measures every point, line and zone of UN Regulation No. 149. It also checks any lamp's light distribution against every market, and where lamps sit on the vehicle. It runs in your browser, and your files stay on your computer.</p>
     <div class="actions">
       <a class="button" href="./app/">Open Cutline</a>
       <a class="quiet" href="./Cutline.html" download>Download for offline use</a>
@@ -257,6 +257,25 @@ footer a { color: var(--on-night-muted); }
   </div>
 </section>
 
+<section id="markets" aria-labelledby="markets-title">
+  <div class="wrap">
+    <h2 id="markets-title">Any lamp, every market</h2>
+    <p class="intro">Open an IES or EULUMDAT file of a headlamp or a signal lamp, or send the beam you traced. Cutline checks it against each market by that market's own laboratory method, and against your own targets.</p>
+    <ol class="steps">
+      <li><h3>See it as an engineer does</h3><p>Isolux at 25 m or intensity, on the road surface or a target, in false colour or heat, on a scale you set. A uniformity map shows each direction against its surroundings, so dark patches and stripes stand out and the cut-off does not.</p></li>
+      <li><h3>Check every market</h3><p>UN R149 for right- and left-hand traffic, UN R123, UN R148 for signal lamps, FMVSS 108, CMVSS 108, Taiwan's VSTD and India's AIS drafts. Each value cites its source; national rules show which UN series they stand on.</p></li>
+      <li><h3>Share the report</h3><p>One HTML file with the summary, the pictures, every requirement and your targets, ready to print to PDF. Markets Cutline cannot check from an official source are listed with the reason, never guessed.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="vehicle" aria-labelledby="vehicle-title">
+  <div class="wrap">
+    <h2 id="vehicle-title">Where the lamps sit on the vehicle</h2>
+    <p class="intro">Open an STL, OBJ or glTF model of the vehicle and click where each lamp goes. Cutline checks UN R48 and FMVSS 108: presence and number for the vehicle's category, heights to the apparent surface, distance from the outer edge, the separation of each pair, and the angles of geometric visibility, casting rays to find any bodywork that hides a lamp.</p>
+  </div>
+</section>
+
 <section class="limits" aria-labelledby="limits-title">
   <div class="wrap">
     <h2 id="limits-title">What it does not do</h2>
@@ -265,7 +284,9 @@ footer a { color: var(--on-night-muted); }
       <li><strong>Type-approval photometry only.</strong> No colour, run-up time, conformity-of-production allowances, bend lighting or adaptive driving beams.</li>
       <li><strong>One optical unit, one LED.</strong> A production headlamp often combines several modules. The reflector's starting design still fails a few Class C requirements.</li>
       <li><strong>Simple scattering.</strong> Lens texture and outer-lens haze are modelled; dust, ageing and heat are not.</li>
-      <li><strong>Sources you can check.</strong> Every limit cites the official text, and the documentation lists the choices the regulation leaves open.</li>
+      <li><strong>One distribution at a time.</strong> Rules comparing two states of a lamp, such as stop to tail ratios, are listed for you to check.</li>
+      <li><strong>Meshes, not STEP.</strong> Export the vehicle from CAD as STL, OBJ or glTF. Rules relative to the rear window or other lamps are listed to check by hand.</li>
+      <li><strong>Sources you can check.</strong> Every limit cites the official text, and the documentation lists the choices each regulation leaves open.</li>
     </ul>
   </div>
 </section>
@@ -286,7 +307,9 @@ footer a { color: var(--on-night-muted); }
     <span>Cutline {{version}}, free and open source under the Apache licence.</span>
     <a href="{{repo}}/blob/main/docs/PHYSICS.md">Physics</a>
     <a href="{{repo}}/blob/main/docs/REGULATION.md">Regulation</a>
-    <a href="./schema/cutline.design.v1.schema.json">Design file schema</a>
+    <a href="./schema/cutline.design.v1.schema.json">Design schema</a>
+    <a href="./schema/cutline.photometry.v1.schema.json">Study schema</a>
+    <a href="./schema/cutline.vehicle.v1.schema.json">Vehicle schema</a>
   </div>
 </footer>
 </body>
