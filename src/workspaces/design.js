@@ -25,12 +25,14 @@ import { Persistence } from '../ui/persistence.js';
 import { byId, h, fmt, pct, debounce, downloadBlob, fileName } from '../ui/dom.js';
 import { hydrateIcons } from '../ui/icons.js';
 import { readPref, writePref } from '../ui/prefs.js';
+import { beamPosition, roadPosition, lampPosition, beamMeasure, roadMeasure, lampMeasure, revealRow } from '../ui/view-tools.js';
 
 /** @import { Design } from '../core/model.js' */
 /** @import { Analysis } from '../core/analysis.js' */
 /** @import { RayPath } from '../core/types.js' */
 /** @import { ChangeDetail } from '../core/history.js' */
-/** @import { RibbonTab, Command } from '../ui/shell.js' */
+/** @import { RibbonTab, Command, MenuEntry } from '../ui/shell.js' */
+/** @import { MeasureAdapter } from '../ui/measure.js' */
 /** @import { Figure, InspectorConfig } from '../ui/inspector.js' */
 /** @import { OptimiseSetup, OptimiseState } from '../ui/optimise-view.js' */
 /** @import { SurfaceOutline } from '../core/section.js' */
@@ -137,6 +139,8 @@ export class DesignWorkspace {
     this.progress = null;
     /** @type {string | null} the requirement picked in the compliance table */
     this.selected = null;
+    /** The test point the context menu was opened on. @type {string | null} */
+    this.menuTarget = null;
     /** @type {'saved' | 'pending' | 'error'} */
     this.saveState = 'saved';
     /** @type {Partial<Record<string, OptimiseSetup>>} */
@@ -642,6 +646,7 @@ export class DesignWorkspace {
       { id: 'new-seed', label: 'New random seed', icon: 'refresh', hint: 'Trace with different random rays to see the sampling noise', run: () => this.edit('Use a new random seed', x => { x.simulation.seed = (x.simulation.seed * 1103515245 + 12345) >>> 0; }) },
       { id: 'toggle-contours', label: 'Iso-candela lines', icon: 'layers', hint: `Show lines at ${CONTOUR_LEVELS.map(l => fmt(l, 0)).join(', ')} cd`, pressed: () => this.beamView.showContours, run: () => { this.beamView.showContours = !this.beamView.showContours; this.beamView.request(); } },
       { id: 'toggle-rays', label: 'Rays', icon: 'rays', hint: 'Show traced rays in the lamp view', pressed: () => this.lampView.showRays, run: () => { this.lampView.showRays = !this.lampView.showRays; this.lampView.request(); } },
+      { id: 'show-requirement', label: 'Show it in the table', icon: 'table', palette: false, enabled: () => !!this.app.menuPoint && !!this.menuTarget, run: () => this.showRequirement(/** @type {string} */ (this.menuTarget)) },
     ];
   }
 
@@ -669,6 +674,7 @@ export class DesignWorkspace {
         { caption: 'Show', items: [{ cmd: 'view-beam', label: 'Beam' }, { cmd: 'view-road', label: 'Road' }, { cmd: 'view-lamp', label: 'Lamp' }] },
         { caption: 'Camera', items: [{ cmd: 'fit', label: 'Fit' }, { cmd: 'zoom-in', size: 'small' }, { cmd: 'zoom-out', size: 'small' }] },
         { caption: 'Overlays', items: [{ cmd: 'toggle-contours', label: 'Iso-candela' }, { cmd: 'toggle-rays', label: 'Rays' }] },
+        { caption: 'Tools', items: [{ cmd: 'measure', label: 'Measure' }] },
         { caption: 'Panels', items: [{ cmd: 'toggle-studies', size: 'small', label: 'Studies' }, { cmd: 'toggle-inspector', size: 'small', label: 'Design' }, { cmd: 'toggle-theme', label: 'Dark theme' }] },
       ] },
     ];
@@ -686,6 +692,37 @@ export class DesignWorkspace {
       ['Step a value', '↑ / ↓ in the field'],
     ];
   }
+
+  // ---------- Canvas menu, position and measuring ----------
+
+  /** The context menu for a canvas point: a test point under it, then the view. @param {number} x @param {number} y @returns {MenuEntry[]} */
+  menu(x, y) {
+    /** @type {MenuEntry[]} */
+    const place = [{ cmd: 'centre-here' }, { cmd: 'copy-position', label: this.view === 'beam' ? 'Copy the direction' : 'Copy the position' }, { cmd: 'measure-here' }, '-', { cmd: 'fit' }];
+    if (this.view === 'beam') {
+      const marker = this.analysis ? this.beamView.markerAt(x, y) : null;
+      this.menuTarget = marker?.id ?? null;
+      return [...(marker ? [{ heading: marker.label }, { cmd: 'show-requirement' }, /** @type {MenuEntry} */ ('-')] : []), ...place, { cmd: 'toggle-contours' }, { cmd: 'export-png' }];
+    }
+    this.menuTarget = null;
+    return [...place, ...(this.view === 'lamp' ? [{ cmd: 'toggle-rays' }] : []), { cmd: 'export-png' }];
+  }
+
+  /** @param {string} id */
+  showRequirement(id) {
+    if (this.study !== 'compliance') this.showStudy('compliance');
+    if (!revealRow(id)) this.select(id);
+  }
+
+  /** @param {number} x @param {number} y */
+  position(x, y) {
+    if (this.view === 'beam') return beamPosition(this.beamView, x, y);
+    if (this.view === 'road') return roadPosition(this.roadView, x, y);
+    return this.lampView.sections ? lampPosition(this.lampView, x, y) : null;
+  }
+
+  /** @returns {MeasureAdapter} */
+  measure() { return this.view === 'beam' ? beamMeasure(this.beamView) : this.view === 'road' ? roadMeasure(this.roadView) : lampMeasure(this.lampView); }
 }
 
 /**

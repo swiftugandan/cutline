@@ -18,6 +18,7 @@ import { marketsView, marketForm, targetsView, uniformityView, roadView, fileVie
 import { studyReport, studyCsv } from '../ui/report.js';
 import { Persistence } from '../ui/persistence.js';
 import { readPref, writePref } from '../ui/prefs.js';
+import { beamPosition, roadPosition, beamMeasure, roadMeasure, revealRow } from '../ui/view-tools.js';
 import { renderStudyList } from './design.js';
 import { byId, h, fmt, debounce, downloadBlob, fileName } from '../ui/dom.js';
 import { hydrateIcons } from '../ui/icons.js';
@@ -25,7 +26,8 @@ import { hydrateIcons } from '../ui/icons.js';
 /** @import { Study, Target } from '../core/study.js' */
 /** @import { StudyAnalysis, MarketResult } from '../core/study-analysis.js' */
 /** @import { ChangeDetail } from '../core/history.js' */
-/** @import { RibbonTab, Command } from '../ui/shell.js' */
+/** @import { RibbonTab, Command, MenuEntry } from '../ui/shell.js' */
+/** @import { MeasureAdapter } from '../ui/measure.js' */
 /** @import { InspectorConfig } from '../ui/inspector.js' */
 /** @import { Role } from '../core/regulation/catalog.js' */
 /** @import { Dip } from '../core/uniformity.js' */
@@ -110,6 +112,8 @@ export class PhotometryWorkspace {
     this.selected = null;
     /** Adding a target by clicking the beam. */
     this.picking = false;
+    /** The test point the context menu was opened on. @type {string | null} */
+    this.menuTarget = null;
     /** @type {Dip[]} */
     this.dips = [];
     // On a phone the scale would cover most of the picture, so it starts folded there.
@@ -128,8 +132,8 @@ export class PhotometryWorkspace {
     this.reanalyse = debounce(() => this.analyse(), 120);
     /** @type {Interaction} */
     this.interaction = {
-      down: (_e, x, y) => {
-        if (!this.picking || this.view !== 'ph-beam' || !this.analysis) return false;
+      down: (e, x, y) => {
+        if (e.button !== 0 || !this.picking || this.view !== 'ph-beam' || !this.analysis) return false;
         const [hh, vv] = this.beamView.toAngles(x, y);
         this.addTargetAt(hh, vv);
         return true;
@@ -615,8 +619,8 @@ export class PhotometryWorkspace {
       const canvas = document.createElement('canvas');
       canvas.width = w * 2; canvas.height = ht * 2;
       const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
-      const saved = { canvas: view.canvas, ctx: view.ctx, width: view.width, height: view.height, camera: { ...view.camera }, active: view.active, dpr: view.dpr };
-      Object.assign(view, { canvas, ctx, width: w, height: ht, active: false, dpr: 2 });
+      const saved = { canvas: view.canvas, ctx: view.ctx, width: view.width, height: view.height, camera: { ...view.camera }, active: view.active, dpr: view.dpr, plain: view.plain };
+      Object.assign(view, { canvas, ctx, width: w, height: ht, active: false, dpr: 2, plain: true });
       try { view.fit(); view.draw(); } finally { Object.assign(view, saved); }
       return canvas.toDataURL('image/png');
     };
@@ -669,6 +673,10 @@ export class PhotometryWorkspace {
       set('ph-mode-uniformity', 'Colour by uniformity', 'contrast', () => d().display.beam.mode === 'uniformity', s => { s.display.beam.mode = 'uniformity'; }, 'Each direction against the average around it: dark patches show blue'),
       ...(/** @type {['night' | 'heat' | 'spectrum' | 'grey', string][]} */ ([['night', 'Night'], ['heat', 'Heat'], ['spectrum', 'False colour'], ['grey', 'Grey']])).map(([id, label]) => set(`ph-palette-${id}`, `${label} palette`, 'image', () => d().display[this.view === 'ph-road' ? 'road' : 'beam'].palette === id, s => { s.display[this.view === 'ph-road' ? 'road' : 'beam'].palette = id; })),
       { id: 'ph-contours', label: 'Contour lines', icon: 'layers', pressed: () => this.beamView.showContours, run: () => { this.beamView.showContours = !this.beamView.showContours; this.beamView.request(); } },
+      { id: 'ph-toggle-uniformity', label: 'Colour by uniformity', icon: 'contrast', shortcut: 'U', palette: false, enabled: has, pressed: () => d().display.beam.mode === 'uniformity', run: () => this.app.commands.run(d().display.beam.mode === 'uniformity' ? 'ph-mode-light' : 'ph-mode-uniformity') },
+      // Commands that act on the place the context menu was opened at.
+      { id: 'ph-target-here', label: 'Add a target here', icon: 'target', palette: false, enabled: () => has() && !!this.app.menuPoint && this.view === 'ph-beam', run: () => { const [x, y] = /** @type {[number, number]} */ (this.app.menuPoint); const [hh, vv] = this.beamView.toAngles(x, y); this.addTargetAt(hh, vv); } },
+      { id: 'ph-show-requirement', label: 'Show it in the table', icon: 'table', palette: false, enabled: () => !!this.app.menuPoint && !!this.menuTarget, run: () => { const id = /** @type {string} */ (this.menuTarget); if (!revealRow(id)) this.select(id); } },
     ];
   }
 
@@ -698,6 +706,7 @@ export class PhotometryWorkspace {
       ] },
       { id: 'view', label: 'View', groups: [
         { caption: 'Camera', items: [{ cmd: 'fit', label: 'Fit' }, { cmd: 'zoom-in', size: 'small' }, { cmd: 'zoom-out', size: 'small' }] },
+        { caption: 'Tools', items: [{ cmd: 'measure', label: 'Measure' }] },
         { caption: 'Panels', items: [{ cmd: 'toggle-studies', size: 'small', label: 'Studies' }, { cmd: 'toggle-inspector', size: 'small', label: 'Design' }, { cmd: 'toggle-theme', label: 'Dark theme' }] },
       ] },
     ];
@@ -708,7 +717,35 @@ export class PhotometryWorkspace {
 
   /** @returns {[string, string][]} */
   shortcuts() {
-    return [['Beam or road picture', '1 or 2'], ['Colour by uniformity, or by light', 'U'], ['Pick a target on the beam', 'P']];
+    return [['Beam or road picture', '1 or 2'], ['Colour by uniformity, or by light', 'U'], ['Pick a target on the beam', 'P, or right-click the beam']];
   }
+
+  // ---------- Canvas menu, position and measuring ----------
+
+  /** The context menu for a canvas point: a test point under it, a target there, then the picture.
+   * @param {number} x @param {number} y @returns {MenuEntry[]} */
+  menu(x, y) {
+    this.menuTarget = null;
+    if (!this.hasFile) return [{ cmd: 'open', label: 'Open a light distribution' }, { cmd: 'ph-use-design' }];
+    /** @type {MenuEntry[]} */
+    const place = [{ cmd: 'centre-here' }, { cmd: 'copy-position', label: this.view === 'ph-beam' ? 'Copy the direction' : 'Copy the position' }, { cmd: 'measure-here' }, '-', { cmd: 'fit' }];
+    if (this.view !== 'ph-beam') return [...place, { cmd: 'export-png' }];
+    const marker = this.analysis ? this.beamView.markerAt(x, y) : null;
+    this.menuTarget = marker?.id ?? null;
+    return [...(marker ? [{ heading: marker.label }, { cmd: 'ph-show-requirement' }, /** @type {MenuEntry} */ ('-')] : []), { cmd: 'ph-target-here' }, ...place, { cmd: 'ph-contours' }, { cmd: 'ph-toggle-uniformity' }, { cmd: 'export-png' }];
+  }
+
+  /** @param {number} x @param {number} y */
+  position(x, y) {
+    if (!this.analysis) return null;
+    return this.view === 'ph-road' ? roadPosition(this.roadView, x, y) : beamPosition(this.beamView, x, y);
+  }
+
+  /** @returns {MeasureAdapter | null} */
+  measure() { return this.analysis ? (this.view === 'ph-road' ? roadMeasure(this.roadView) : beamMeasure(this.beamView)) : null; }
+
+  cancelMode() { if (this.picking) this.togglePicking(); }
+
+  cursor() { return this.picking ? 'handle' : null; }
 }
 

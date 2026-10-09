@@ -49,6 +49,10 @@ export class LampView {
     this.frame = 0;
     /** Several views share one canvas; only the active one draws. */
     this.active = false;
+    /** The shell's drawing over the view, in CSS pixels. @type {((ctx: CanvasRenderingContext2D) => void) | null} */
+    this.overlay = null;
+    /** Draw without on-screen aids, for an exported image. */
+    this.plain = false;
   }
 
   resize() {
@@ -85,8 +89,30 @@ export class LampView {
     this.request();
   }
 
-  /** @param {number} factor */
-  zoom(factor) { this.camera.scale = Math.min(60, Math.max(0.2, this.camera.scale * factor)); this.request(); }
+  /** Zooms about a canvas point, which keeps its place in its pane. @param {number} factor @param {number} [x] @param {number} [y] */
+  zoom(factor, x, y) {
+    const at = x !== undefined && y !== undefined ? this.toSection(x, y) : null;
+    this.camera.scale = Math.min(60, Math.max(0.2, this.camera.scale * factor));
+    if (at) {
+      const after = /** @type {{ u: number, w: number }} */ (this.toSection(/** @type {number} */ (x), /** @type {number} */ (y), at.view));
+      this.camera.u += at.u - after.u; this.camera.w += at.w - after.w;
+    }
+    this.request();
+  }
+
+  /** The section point under a canvas point: the pane, and u along the axis and w across it in mm. A pane may be
+   * named to read a point outside it. @param {number} x @param {number} y @param {'side' | 'top'} [view] */
+  toSection(x, y, view) {
+    const pane = this.panes().find(p => (view ? p.view === view : x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h));
+    if (!pane) return null;
+    return { view: pane.view, u: this.camera.u + (x - pane.x - pane.w / 2) / this.camera.scale, w: this.camera.w - (y - pane.y - pane.h / 2) / this.camera.scale };
+  }
+
+  /** The canvas point of a section point. @param {'side' | 'top'} view @param {number} u @param {number} w */
+  fromSection(view, u, w) {
+    const pane = /** @type {{ x: number, y: number, w: number, h: number }} */ (this.panes().find(p => p.view === view));
+    return [pane.x + pane.w / 2 + (u - this.camera.u) * this.camera.scale, pane.y + pane.h / 2 - (w - this.camera.w) * this.camera.scale];
+  }
 
   /** @param {number} dx @param {number} dy */
   pan(dx, dy) { this.camera.u -= dx / this.camera.scale; this.camera.w += dy / this.camera.scale; this.request(); }
@@ -106,6 +132,8 @@ export class LampView {
     ctx.fillRect(0, 0, this.width, this.height);
     if (!this.sections) return;
     for (const pane of this.panes()) this.drawPane(pane);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!this.plain) this.overlay?.(ctx);
   }
 
   /** @param {{ view: 'side' | 'top', x: number, y: number, w: number, h: number }} pane */

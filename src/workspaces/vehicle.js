@@ -8,7 +8,8 @@ import { INSTALL_ROLES, checkInstallation, overallWidth } from '../core/installa
 import { readMesh, toVehicleFrame } from '../core/mesh/mesh.js';
 import { sampleVehicleStl } from '../core/mesh/sample.js';
 import { Bvh } from '../core/mesh/bvh.js';
-import { VehicleView } from '../render/vehicle-view.js';
+import { VehicleView, dimensionsFor } from '../render/vehicle-view.js';
+import { frame, dot } from '../render/camera.js';
 import { Inspector } from '../ui/inspector.js';
 import { checksView, lampsView, visibilityView, modelView } from '../ui/vehicle-views.js';
 import { vehicleReport } from '../ui/vehicle-report.js';
@@ -16,18 +17,31 @@ import { Persistence } from '../ui/persistence.js';
 import { renderStudyList } from './design.js';
 import { byId, h, fmt, debounce, downloadBlob, fileName } from '../ui/dom.js';
 import { hydrateIcons } from '../ui/icons.js';
+import { readPref, writePref } from '../ui/prefs.js';
 
 /** @import { Vehicle, PlacedLamp, Facing } from '../core/vehicle.js' */
 /** @import { InstallResult } from '../core/installation.js' */
 /** @import { Mesh, Bounds } from '../core/mesh/mesh.js' */
 /** @import { ChangeDetail } from '../core/history.js' */
-/** @import { RibbonTab, Command } from '../ui/shell.js' */
+/** @import { RibbonTab, Command, MenuEntry } from '../ui/shell.js' */
+/** @import { MeasureAdapter } from '../ui/measure.js' */
 /** @import { InspectorConfig } from '../ui/inspector.js' */
 /** @import { CutlineApp } from '../app.js' */
 /** @import { Workspace, ViewEntry, Legend, Interaction } from './workspace.js' */
 /** @import { ViewPreset, LampStatus } from '../render/vehicle-view.js' */
 
 /** @typedef {'checks' | 'lamps' | 'visibility' | 'model'} StudyId */
+/**
+ * @typedef {{ kind: 'placing', target: { index: number } | { role: string } }} Mode
+ *   Placing a lamp by clicking the model: the lamp's index, or a new lamp's role.
+ * @typedef {{ kind: 'camera', x: number, y: number, moved: boolean, slide: boolean, pivot: number[] | null, depth?: number }
+ *   | { kind: 'lamp', index: number, twin: number | null, x: number, y: number, moved: boolean, began: boolean }
+ *   | { kind: 'cube', x: number, y: number, moved: boolean }} Drag
+ *   A gesture on the canvas: turning or sliding the camera, moving a lamp, or a click on the view cube.
+ */
+
+/** The standard views, for the menu and the ribbon. */
+const LOOK_FROM = /** @type {[ViewPreset, string][]} */ ([['front', 'Front'], ['rear', 'Rear'], ['left', 'Left'], ['right', 'Right'], ['top', 'Top'], ['iso', '3D']]);
 
 /** @implements {Workspace} */
 export class VehicleWorkspace {
@@ -64,8 +78,10 @@ export class VehicleWorkspace {
     this.pack = 'r48';
     /** @type {number | null} */
     this.selected = null;
-    /** Placing a lamp by clicking the model: the lamp's index, or a new lamp's role. @type {{ index: number } | { role: string } | null} */
-    this.placing = null;
+    /** @type {Mode | null} */
+    this.mode = null;
+    /** A run of arrow-key nudges in progress, recorded as one undo step when the key comes up. */
+    this.nudging = false;
     /** @type {'saved' | 'pending' | 'error'} */
     this.saveState = 'saved';
     /** @type {InspectorConfig<Vehicle>} */
@@ -80,28 +96,23 @@ export class VehicleWorkspace {
     this.inspector = new Inspector(byId('inspectorBody'), { store: this.store, config: this.config, onError: message => app.toasts.show(message, { kind: 'error' }) });
     this.autosave = debounce(() => this.save(), 600);
     this.recheck = debounce(() => this.check(), 120);
-    /** @type {{ x: number, y: number, moved: boolean, slide: boolean } | null} */
+    // How the vehicle is looked at is a preference of this browser, not part of the document.
+    this.current.camera.ortho = readPref('cutline-vehicle-ortho') === 'yes';
+    this.current.showFields = readPref('cutline-vehicle-fields') !== 'no';
+    this.current.showDims = readPref('cutline-vehicle-dimensions') !== 'no';
+    this.current.xray = readPref('cutline-vehicle-xray') === 'yes';
+    this.current.surface = (origin, dir) => this.bvh?.intersect(/** @type {[number, number, number]} */ (origin), /** @type {[number, number, number]} */ (dir))?.t ?? null;
+    /** @type {Drag | null} */
     this.drag = null;
     /** @type {Interaction} */
     this.interaction = {
-      down: (e, x, y) => { this.drag = { x, y, moved: false, slide: e.shiftKey || e.button === 2 || e.button === 1 }; return true; },
-      move: (_e, x, y) => {
-        if (!this.drag) return false;
-        const dx = x - this.drag.x, dy = y - this.drag.y;
-        if (!this.drag.moved && Math.hypot(dx, dy) < 3) return true;
-        this.drag.moved = true;
-        if (this.drag.slide) this.current.slide(dx, dy); else this.current.pan(dx, dy);
-        this.drag.x = x; this.drag.y = y;
-        this.app.updateScale();
-        return true;
-      },
-      up: (_e, x, y) => {
-        const click = this.drag && !this.drag.moved;
-        this.drag = null;
-        if (click) this.click(x, y);
-        return true;
-      },
+      down: (e, x, y) => this.pointerDown(e, x, y),
+      move: (e, x, y) => this.pointerMove(e, x, y),
+      up: (e, x, y) => this.pointerUp(e, x, y),
+      cancel: () => this.cancelDrag(),
     };
+    window.addEventListener('keyup', e => { if (e.key.startsWith('Arrow')) this.endNudge(); });
+    window.addEventListener('blur', () => this.endNudge());
   }
 
   get doc() { return this.store.doc; }
@@ -127,8 +138,11 @@ export class VehicleWorkspace {
   }
 
   deactivate() {
+    this.cancelDrag();
+    this.endNudge();
     this.current.active = false;
-    this.placing = null;
+    this.current.hover = null;
+    this.mode = null;
     byId('viewportEmpty').hidden = true;
   }
 
@@ -138,6 +152,7 @@ export class VehicleWorkspace {
 
   /** @param {string} label @param {(v: Vehicle) => void} mutate */
   edit(label, mutate) {
+    this.endNudge();
     try { this.store.transact(label, mutate); } catch (e) { this.app.toasts.show(e instanceof Error ? e.message : String(e), { kind: 'error' }); }
   }
 
@@ -145,7 +160,7 @@ export class VehicleWorkspace {
   onChange(detail) {
     if (this.selected !== null && this.selected >= this.doc.lamps.length) this.selected = this.doc.lamps.length ? this.doc.lamps.length - 1 : null;
     if (detail.kind === 'preview') { this.inspector.refreshValues(); this.refreshFrame(); this.recheck(); return; }
-    if (detail.kind === 'rollback') { this.inspector.refreshValues(true); return; }
+    if (detail.kind === 'rollback') { this.inspector.refreshValues(true); this.recheck(); return; }
     this.refreshFrame();
     this.recheck();
     if (this.isActive) {
@@ -223,22 +238,168 @@ export class VehicleWorkspace {
     view.selected = this.selected;
     const r = this.results.find(x => x.pack === this.pack);
     view.map = this.selected !== null ? r?.maps.get(this.selected) ?? null : null;
+    view.dims = this.selected !== null && r && this.bounds ? dimensionsFor(this.selected, this.doc.lamps, r.items, overallWidth(this.doc, this.bounds)) : [];
     view.request();
     if (this.isActive) { this.renderStudies(); this.renderDock(); this.renderStatus(); }
   }
 
   // ---------- Pointer ----------
 
-  /** A click: places a lamp in placing mode, otherwise selects the lamp under the pointer. @param {number} x @param {number} y */
+  /** A press on the canvas: the view cube, a lamp to move, or the camera to turn or slide.
+   * @param {PointerEvent} e @param {number} x @param {number} y */
+  pointerDown(e, x, y) {
+    this.endNudge();
+    this.current.stop();
+    if (e.button === 0 && !e.ctrlKey) {
+      if (this.current.cubeAt(x, y)) { this.drag = { kind: 'cube', x, y, moved: false }; return true; }
+      const lamp = !this.mode && !this.app.measure.active ? this.current.lampAt(x, y) : null;
+      if (lamp !== null) {
+        if (lamp !== this.selected) this.select(lamp);
+        this.drag = { kind: 'lamp', index: lamp, twin: this.twinOf(lamp), x, y, moved: false, began: false };
+        return true;
+      }
+    }
+    const slide = e.shiftKey || e.button === 1 || e.button === 2;
+    const hit = this.pick(x, y)?.point ?? null;
+    // Turn about the model point under the pointer, or the target when the pointer is off the model.
+    this.drag = { kind: 'camera', x, y, moved: false, slide, pivot: slide ? null : hit ?? [...this.current.camera.target], depth: hit ? this.current.depthOf(hit) : undefined };
+    return true;
+  }
+
+  /** @param {PointerEvent} e @param {number} x @param {number} y */
+  pointerMove(e, x, y) {
+    const d = this.drag;
+    if (!d) { this.hoverAt(x, y); return false; }
+    const dx = x - d.x, dy = y - d.y;
+    if (!d.moved && Math.hypot(dx, dy) < 3) return true;
+    d.moved = true;
+    if (d.kind === 'camera') {
+      if (d.slide) this.current.slide(dx, dy, d.depth);
+      else { this.current.pivot = d.pivot; this.current.orbit(dx, dy, d.pivot ?? undefined); }
+      d.x = x; d.y = y;
+      this.app.updateScale();
+    } else if (d.kind === 'lamp') this.dragLamp(d, x, y, e);
+    return true;
+  }
+
+  /** @param {PointerEvent} e @param {number} x @param {number} y */
+  pointerUp(e, x, y) {
+    const d = this.drag;
+    this.drag = null;
+    this.current.pivot = null;
+    this.current.snap = null;
+    if (!d) return true;
+    if (d.kind === 'cube') { const face = this.current.cubeAt(x, y); if (!d.moved && face) { this.current.preset(face); this.app.updateScale(); } }
+    else if (d.kind === 'lamp') { if (d.began) this.commitDrag(); }
+    else if (!d.moved && e.button === 0) this.click(x, y);
+    this.current.request();
+    this.hoverAt(x, y);
+    return true;
+  }
+
+  /** Ends a gesture without its click, putting back a lamp that was being moved. */
+  cancelDrag() {
+    const d = this.drag;
+    this.drag = null;
+    this.current.pivot = null;
+    this.current.snap = null;
+    if (d?.kind === 'lamp' && d.began) this.store.cancel();
+    this.current.request();
+  }
+
+  /** The lamp and view cube face under the pointer, lit and given a cursor. @param {number} x @param {number} y */
+  hoverAt(x, y) {
+    const view = this.current;
+    const face = view.cubeAt(x, y);
+    const lamp = face || !this.bounds ? null : view.lampAt(x, y);
+    if (lamp !== view.hover || face !== view.cubeHover) { view.hover = lamp; view.cubeHover = face; view.request(); }
+    this.app.viewport.dataset.cursor = face ? 'handle' : this.app.measure.active ? 'crosshair' : this.mode ? 'place' : lamp !== null ? 'move' : 'grab';
+  }
+
+  /** Moves the dragged lamp to the model point under the pointer, snapping to its twin's mirror image unless Alt is
+   * held; with Shift its twin moves too, mirrored. @param {Extract<Drag, { kind: 'lamp' }>} d @param {number} x @param {number} y @param {PointerEvent} e */
+  dragLamp(d, x, y, e) {
+    const hit = this.pick(x, y);
+    if (!hit) return;
+    if (!d.began) { this.store.begin('Move a lamp'); d.began = true; }
+    const lamps = this.store.doc.lamps, l = lamps[d.index], twin = d.twin !== null ? lamps[d.twin] : null;
+    let p = hit.point.map(Math.round);
+    this.current.snap = null;
+    if (twin && !e.altKey && !e.shiftKey) {
+      const mirror = [twin.x, -twin.y, twin.z];
+      const a = this.current.project(mirror), b = this.current.project(hit.point);
+      if (a && b && Math.hypot(a[0] - b[0], a[1] - b[1]) < 10) {
+        p = mirror;
+        this.current.snap = { a: [twin.x, twin.y, twin.z], b: mirror, text: `Mirrors ${twin.name.toLowerCase()}` };
+      }
+    }
+    Object.assign(l, { x: p[0], y: p[1], z: p[2] });
+    // A side lamp faces the side it is on.
+    if (INSTALL_ROLES[l.role].facing === 'side') l.facing = p[1] >= 0 ? 'left' : 'right';
+    if (twin && e.shiftKey) {
+      Object.assign(twin, { x: p[0], y: -p[1], z: p[2] });
+      if (INSTALL_ROLES[twin.role].facing === 'side') twin.facing = -p[1] >= 0 ? 'left' : 'right';
+    }
+    this.store.preview();
+    this.app.setStatus(this.current.snap ? `${l.name}: ${this.current.snap.text.toLowerCase()}` : `${l.name}: x ${fmt(p[0], 0)}, y ${fmt(p[1], 0)}, z ${fmt(p[2], 0)} mm`);
+  }
+
+  commitDrag() {
+    try { this.store.commit(); } catch (error) { this.app.toasts.show(error instanceof Error ? error.message : String(error), { kind: 'error' }); }
+  }
+
+  /** The other lamp of a pair: the same function on the other side, facing the same way (or the other side, for a
+   * side lamp), nearest the mirror image. @param {number} index */
+  twinOf(index) {
+    const lamps = this.doc.lamps, l = lamps[index];
+    if (!l || Math.abs(l.y) < 1) return null;
+    const side = INSTALL_ROLES[l.role].facing === 'side';
+    let best = null, bestD = Infinity;
+    lamps.forEach((o, j) => {
+      if (j === index || o.role !== l.role || Math.sign(o.y) !== -Math.sign(l.y)) return;
+      if (side ? o.facing === l.facing : o.facing !== l.facing) return;
+      const d = Math.hypot(o.x - l.x, o.y + l.y, o.z - l.z);
+      if (d < bestD) { bestD = d; best = j; }
+    });
+    return best;
+  }
+
+  /** Moves the selected lamp by 1 mm (10 mm with Shift) along the vehicle axis nearest an arrow's direction on the
+   * screen. A run of nudges is one undo step. @param {string} key @param {boolean} big */
+  nudge(key, big) {
+    const i = this.selected;
+    if (i === null) return;
+    const { side, up } = frame(this.current.camera.yaw, this.current.camera.pitch);
+    const want = key === 'arrowright' ? [1, 0] : key === 'arrowleft' ? [-1, 0] : key === 'arrowup' ? [0, 1] : [0, -1];
+    let axis = [1, 0, 0], best = -Infinity;
+    for (const a of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+      const score = dot(a, side) * want[0] + dot(a, up) * want[1];
+      if (score > best) { best = score; axis = a; }
+    }
+    if (!this.nudging) { this.store.begin('Nudge a lamp'); this.nudging = true; }
+    const l = this.store.doc.lamps[i], step = big ? 10 : 1;
+    l.x += axis[0] * step; l.y += axis[1] * step; l.z += axis[2] * step;
+    if (INSTALL_ROLES[l.role].facing === 'side') l.facing = l.y >= 0 ? 'left' : 'right';
+    this.store.preview();
+    this.app.setStatus(`${l.name}: x ${fmt(l.x, 0)}, y ${fmt(l.y, 0)}, z ${fmt(l.z, 0)} mm`);
+  }
+
+  endNudge() {
+    if (!this.nudging) return;
+    this.nudging = false;
+    this.commitDrag();
+  }
+
+  /** A click: places a lamp in placing mode, otherwise selects the lamp under the pointer, or nothing.
+   * @param {number} x @param {number} y */
   click(x, y) {
-    if (this.placing) {
+    if (this.mode?.kind === 'placing') {
       const hit = this.pick(x, y);
       if (!hit) { this.app.toasts.show('Click on the model, where the lamp\'s centre of reference is.'); return; }
       this.place(hit.point, hit.normal);
       return;
     }
-    const lamp = this.current.lampAt(x, y);
-    this.select(lamp);
+    this.select(this.current.lampAt(x, y));
   }
 
   /** The model point under a screen point. @param {number} x @param {number} y */
@@ -252,10 +413,11 @@ export class VehicleWorkspace {
 
   /** Places the lamp being placed at a model point. @param {number[]} p @param {number[]} normal */
   place(p, normal) {
-    const placing = this.placing;
+    const placing = this.mode?.kind === 'placing' ? this.mode.target : null;
     if (!placing) return;
-    this.placing = null;
+    this.mode = null;
     this.app.viewport.dataset.cursor = 'grab';
+    this.app.renderLegend();
     if ('index' in placing) {
       this.edit('Move a lamp', d => { Object.assign(d.lamps[placing.index], { x: Math.round(p[0]), y: Math.round(p[1]), z: Math.round(p[2]) }); });
       this.select(placing.index);
@@ -276,6 +438,7 @@ export class VehicleWorkspace {
   /** @param {number | null} index */
   select(index) {
     this.selected = index;
+    this.current.hover = null;
     this.config.sections[0].paths = index !== null ? [`lamps.${index}`] : [];
     if (index !== null && this.study === 'model') this.study = 'checks';
     this.showResults();
@@ -290,19 +453,39 @@ export class VehicleWorkspace {
     const body = [h('p', { text: 'Choose the lamp, then click the model where its centre of reference is. Cutline faces it the usual way for its function and gives it a typical apparent surface; set both in the design panel.' }), h('label', { class: 'field wide' }, [h('span', { class: 'field-label', text: 'Function' }), role])];
     const choice = await this.app.dialogs.open({ title: 'Add a lamp', body, actions: [{ label: 'Cancel', value: '' }, { label: 'Place it', value: 'place', primary: true }] });
     if (choice !== 'place') return;
-    this.placing = { role: role.value };
-    this.app.viewport.dataset.cursor = 'handle';
-    this.app.setStatus('Click the model where the lamp\'s centre of reference is. Esc cancels.');
-    this.app.renderLegend();
+    this.startPlacing({ role: role.value });
+  }
+
+  /** Adds a lamp of a function: at the point the context menu was opened at, or else by a click on the model.
+   * @param {string} role */
+  placeRole(role) {
+    const at = this.app.menuPoint, hit = at ? this.pick(at[0], at[1]) : null;
+    if (hit) { this.mode = { kind: 'placing', target: { role } }; this.place(hit.point, hit.normal); return; }
+    this.startPlacing({ role });
   }
 
   movePlacing() {
     if (this.selected === null) return;
-    this.placing = { index: this.selected };
-    this.app.viewport.dataset.cursor = 'handle';
-    this.app.setStatus('Click the model where the lamp\'s centre of reference is now.');
+    this.startPlacing({ index: this.selected });
+  }
+
+  /** @param {{ index: number } | { role: string }} target */
+  startPlacing(target) {
+    this.app.measure.stop();
+    this.mode = { kind: 'placing', target };
+    this.app.viewport.dataset.cursor = 'place';
+    this.app.setStatus('index' in target ? 'Click the model where the lamp\'s centre of reference is now. Esc cancels.' : 'Click the model where the lamp\'s centre of reference is. Esc cancels.');
     this.app.renderLegend();
   }
+
+  cancelMode() {
+    if (!this.mode) return;
+    this.mode = null;
+    this.app.viewport.dataset.cursor = 'grab';
+    this.app.renderLegend();
+  }
+
+  cursor() { return this.mode ? 'place' : null; }
 
   /** Adds the lamp's twin on the other side of the median plane. */
   mirror() {
@@ -414,18 +597,20 @@ export class VehicleWorkspace {
   legend() {
     return {
       entries: this.bounds ? [['Pass', '#51cf66'], ['Near', '#f2c230'], ['Fail', '#ff6b6b'], ['Not checked', '#c3cad6']] : [],
-      hint: this.placing ? 'Click the model where the lamp\'s centre of reference is. Esc cancels.' : 'Drag to turn, Shift-drag to move, scroll to zoom. Click a lamp to select it.',
+      hint: this.mode ? 'Click the model where the lamp\'s centre of reference is. Esc cancels.' : this.bounds ? 'Drag to turn, right-drag to move, scroll to zoom. Drag a lamp to move it; right-click for more.' : '',
     };
   }
 
   /** @returns {ViewEntry[]} */
   views() { return [{ id: 'vehicle', label: '3D', icon: 'cube', hint: 'The vehicle and its lamps' }]; }
   setView() { this.current.request(); }
-  scaleUnit() { return null; }
+  /** Lengths read true only without perspective, so the scale bar shows in the orthographic view. */
+  scaleUnit() { return this.current.camera.ortho && this.bounds ? { unit: 'mm', text: (/** @type {number} */ x) => `${fmt(x, 0)} mm` } : null; }
 
   /** @param {number} x @param {number} y */
   readout(x, y) {
     if (!this.bounds) return null;
+    if (this.current.cubeAt(x, y)) return null;
     const lamp = this.current.lampAt(x, y);
     if (lamp !== null) {
       const l = this.doc.lamps[lamp], s = this.statuses()[lamp];
@@ -508,15 +693,13 @@ export class VehicleWorkspace {
     const saved = { ...view.camera, target: [...view.camera.target] };
     /** @type {Record<string, string>} */
     const out = {};
+    view.plain = true;
     for (const preset of /** @type {ViewPreset[]} */ (['front', 'rear', 'iso'])) {
-      view.preset(preset);
+      view.preset(preset, false);
       view.draw();
-      const c = document.createElement('canvas');
-      c.width = view.glCanvas.width; c.height = view.glCanvas.height;
-      const ctx = /** @type {CanvasRenderingContext2D} */ (c.getContext('2d'));
-      ctx.drawImage(view.glCanvas, 0, 0); ctx.drawImage(view.canvas, 0, 0);
-      out[preset] = c.toDataURL('image/png');
+      out[preset] = view.snapshot().toDataURL('image/png');
     }
+    view.plain = false;
     view.camera = saved;
     view.request();
     return out;
@@ -536,6 +719,9 @@ export class VehicleWorkspace {
     const has = () => !!this.bounds, sel = () => this.selected !== null;
     /** @param {ViewPreset} p @param {string} label */
     const preset = (p, label) => ({ id: `veh-view-${p}`, label: `${label} view`, icon: 'cube', enabled: has, run: () => { this.current.preset(p); this.app.updateScale(); } });
+    /** A view setting kept as a preference of this browser. @param {string} id @param {string} label @param {string} icon @param {string} hint @param {'showFields' | 'showDims' | 'xray'} key @param {string} pref @param {string} [shortcut] */
+    const show = (id, label, icon, hint, key, pref, shortcut) => ({ id, label, icon, hint, shortcut, pressed: () => this.current[key], run: () => { this.current[key] = !this.current[key]; writePref(pref, this.current[key] ? 'yes' : 'no'); this.current.request(); } });
+    const lamp = () => (this.selected !== null ? this.doc.lamps[this.selected] : null);
     /** @param {StudyId} id @param {string} label @param {string} icon */
     const study = (id, label, icon) => ({ id: `veh-study-${id}`, label: `Show ${label.toLowerCase()}`, icon, pressed: () => this.study === id, run: () => this.showStudy(id) });
     return [
@@ -544,14 +730,21 @@ export class VehicleWorkspace {
       { id: 'veh-report', label: 'Installation report', icon: 'table', hint: 'Download every check, with pictures, ready to print to PDF', enabled: () => this.results.length > 0, run: () => this.exportReport() },
       { id: 'veh-add', label: 'Add a lamp', icon: 'plus', enabled: has, run: () => this.addLamp() },
       { id: 'veh-move', label: 'Place the lamp again', icon: 'pin', enabled: sel, run: () => this.movePlacing() },
-      { id: 'veh-mirror', label: 'Mirror the lamp', icon: 'refresh', hint: 'Add its twin on the other side of the median plane', enabled: sel, run: () => this.mirror() },
-      { id: 'veh-remove', label: 'Remove the lamp', icon: 'close', enabled: sel, run: () => this.remove() },
+      { id: 'veh-mirror', label: 'Mirror the lamp', icon: 'refresh', hint: 'Add its twin on the other side of the median plane', enabled: () => sel() && this.twinOf(/** @type {number} */ (this.selected)) === null, run: () => this.mirror() },
+      { id: 'veh-remove', label: 'Remove the lamp', icon: 'close', shortcut: 'Delete', enabled: sel, run: () => this.remove() },
+      { id: 'veh-frame', label: 'Zoom to the lamp', icon: 'fit', shortcut: 'Z', enabled: sel, run: () => { const l = lamp(); if (l) this.current.frameLamp(l); } },
+      { id: 'veh-look', label: 'Look along its axis', icon: 'eye', hint: 'See the lamp as an observer in front of it does', enabled: sel, run: () => { const l = lamp(); if (l) this.current.lookAlong(l); } },
+      { id: 'veh-copy-lamp', label: 'Copy its position', icon: 'pin', palette: false, enabled: sel, run: () => { const l = lamp(); if (l) this.app.copyText(`x ${fmt(l.x, 0)}, y ${fmt(l.y, 0)}, z ${fmt(l.z, 0)} mm`); } },
+      // One command per lamp function, so the menu can add one where it was opened; from the palette it starts placing.
+      ...Object.entries(INSTALL_ROLES).map(([role, def]) => ({ id: `veh-place-${role}`, label: `Add a lamp: ${def.name}`, icon: 'plus', enabled: has, run: () => this.placeRole(role) })),
       study('checks', 'Installation', 'pass'), study('lamps', 'Lamps', 'lamp'), study('visibility', 'Visibility', 'eye'), study('model', 'Model', 'cube'),
       { id: 'veh-r48', label: 'UN R48', icon: 'globe', enabled: () => this.results.some(r => r.pack === 'r48'), pressed: () => this.pack === 'r48', run: () => { this.pack = 'r48'; this.showResults(); } },
       { id: 'veh-fmvss', label: 'FMVSS 108', icon: 'globe', enabled: () => this.results.some(r => r.pack === 'fmvss108'), pressed: () => this.pack === 'fmvss108', run: () => { this.pack = 'fmvss108'; this.showResults(); } },
       preset('front', 'Front'), preset('rear', 'Rear'), preset('left', 'Left'), preset('right', 'Right'), preset('top', 'Top'), preset('iso', '3D'),
-      { id: 'veh-ortho', label: 'Orthographic', icon: 'cube', hint: 'Draw without perspective, for reading heights and widths', pressed: () => this.current.camera.ortho, run: () => { this.current.camera.ortho = !this.current.camera.ortho; this.current.request(); } },
-      { id: 'veh-fields', label: 'Visibility fields', icon: 'eye', hint: 'Show the selected lamp\'s field of geometric visibility', pressed: () => this.current.showFields, run: () => { this.current.showFields = !this.current.showFields; this.current.request(); } },
+      { id: 'veh-ortho', label: 'Orthographic', icon: 'cube', hint: 'Draw without perspective, for reading heights and widths', pressed: () => this.current.camera.ortho, run: () => { this.current.camera.ortho = !this.current.camera.ortho; writePref('cutline-vehicle-ortho', this.current.camera.ortho ? 'yes' : 'no'); this.current.request(); this.app.renderLegend(); } },
+      show('veh-fields', 'Visibility fields', 'eye', 'Show the selected lamp\'s field of geometric visibility', 'showFields', 'cutline-vehicle-fields'),
+      show('veh-dims', 'Dimensions', 'ruler', 'Draw the selected lamp\'s heights, widths and separation on the model', 'showDims', 'cutline-vehicle-dimensions'),
+      show('veh-xray', 'See-through body', 'layers', 'Draw the body translucent, to see and pick lamps behind it', 'xray', 'cutline-vehicle-xray', 'X'),
     ];
   }
 
@@ -565,6 +758,7 @@ export class VehicleWorkspace {
       ] },
       { id: 'lamps', label: 'Lamps', groups: [
         { caption: 'Lamps', items: [{ cmd: 'veh-add', label: 'Add a lamp', className: 'sun' }, { cmd: 'veh-move', size: 'small', label: 'Place again' }, { cmd: 'veh-mirror', size: 'small', label: 'Mirror' }, { cmd: 'veh-remove', size: 'small', label: 'Remove' }] },
+        { caption: 'Look', items: [{ cmd: 'veh-frame', size: 'small', label: 'Zoom to it' }, { cmd: 'veh-look', size: 'small', label: 'Along its axis' }] },
         { caption: 'Edit', items: [{ cmd: 'undo', size: 'small' }, { cmd: 'redo', size: 'small' }] },
       ] },
       { id: 'check', label: 'Check', groups: [
@@ -573,7 +767,8 @@ export class VehicleWorkspace {
       ] },
       { id: 'view', label: 'View', groups: [
         { caption: 'Look from', items: [{ cmd: 'veh-view-front', size: 'small', label: 'Front' }, { cmd: 'veh-view-rear', size: 'small', label: 'Rear' }, { cmd: 'veh-view-left', size: 'small', label: 'Left' }, { cmd: 'veh-view-right', size: 'small', label: 'Right' }, { cmd: 'veh-view-top', size: 'small', label: 'Top' }, { cmd: 'veh-view-iso', size: 'small', label: '3D' }] },
-        { caption: 'Show', items: [{ cmd: 'veh-ortho', label: 'Orthographic' }, { cmd: 'veh-fields', label: 'Fields' }] },
+        { caption: 'Show', items: [{ cmd: 'veh-ortho', label: 'Orthographic' }, { cmd: 'veh-xray', label: 'See-through' }, { cmd: 'veh-dims', size: 'small', label: 'Dimensions' }, { cmd: 'veh-fields', size: 'small', label: 'Fields' }] },
+        { caption: 'Tools', items: [{ cmd: 'measure', label: 'Measure' }] },
         { caption: 'Camera', items: [{ cmd: 'fit', label: 'Fit' }, { cmd: 'zoom-in', size: 'small' }, { cmd: 'zoom-out', size: 'small' }] },
         { caption: 'Panels', items: [{ cmd: 'toggle-studies', size: 'small', label: 'Studies' }, { cmd: 'toggle-inspector', size: 'small', label: 'Design' }, { cmd: 'toggle-theme', label: 'Dark theme' }] },
       ] },
@@ -582,13 +777,104 @@ export class VehicleWorkspace {
 
   /** @param {string} key @param {KeyboardEvent} e */
   key(key, e) {
-    if (key === 'escape' && this.placing) { e.preventDefault(); this.placing = null; this.app.viewport.dataset.cursor = 'grab'; this.app.renderLegend(); return null; }
-    return key === 'a' ? 'veh-add' : key === 'm' ? 'veh-mirror' : key === 'delete' || key === 'backspace' ? 'veh-remove' : null;
+    if (!key.startsWith('arrow')) this.endNudge();
+    if (key === 'escape') {
+      e.preventDefault();
+      if (this.drag?.kind === 'lamp') this.cancelDrag();
+      else if (this.mode) this.cancelMode();
+      else if (this.selected !== null) this.select(null);
+      return null;
+    }
+    // Arrows nudge the selected lamp while nothing else has the keyboard.
+    if (key.startsWith('arrow') && this.selected !== null && this.bounds && (e.target === document.body || e.target instanceof HTMLCanvasElement)) {
+      e.preventDefault();
+      this.nudge(key, e.shiftKey);
+      return null;
+    }
+    return ({ a: 'veh-add', m: 'veh-mirror', z: 'veh-frame', x: 'veh-xray', delete: 'veh-remove', backspace: 'veh-remove' })[key] ?? null;
   }
 
   /** @returns {[string, string][]} */
   shortcuts() {
-    return [['Add a lamp', 'A'], ['Mirror the selected lamp', 'M'], ['Remove the selected lamp', 'Delete'], ['Turn the view', 'Drag; Shift-drag moves it'], ['Cancel placing a lamp', 'Esc']];
+    return [
+      ['Add a lamp', 'A, or right-click the model'], ['Move a lamp', 'Drag it; Shift moves its twin too, Alt stops snapping'], ['Nudge the selected lamp', 'Arrow keys; Shift for 10 mm'],
+      ['Mirror the selected lamp', 'M'], ['Remove the selected lamp', 'Delete'], ['Zoom to the selected lamp', 'Z, or double-click it'], ['See through the body', 'X'],
+      ['Turn the view', 'Drag; it turns about the point under the pointer'], ['Move the view', 'Right-drag, middle-drag or Shift-drag'], ['Standard views', 'Click the view cube'],
+      ['Cancel placing, or clear the selection', 'Esc'],
+    ];
+  }
+
+  // ---------- Canvas menu, position and measuring ----------
+
+  /** The context menu for a canvas point: the lamp under it, the model under it, or the view.
+   * @param {number} x @param {number} y @returns {MenuEntry[]} */
+  menu(x, y) {
+    this.cancelMode();
+    if (!this.bounds) return [{ cmd: 'open', label: 'Open a vehicle model' }, { cmd: 'veh-sample' }];
+    /** @type {MenuEntry[]} */
+    const view = [
+      { cmd: 'fit' }, { label: 'Look from', icon: 'cube', items: LOOK_FROM.map(([p, label]) => ({ cmd: `veh-view-${p}`, label })) }, '-',
+      { cmd: 'veh-ortho' }, { cmd: 'veh-xray' }, { cmd: 'veh-dims' }, { cmd: 'veh-fields' },
+    ];
+    const lamp = this.current.lampAt(x, y);
+    if (lamp !== null) {
+      if (lamp !== this.selected) this.select(lamp);
+      return [
+        { heading: this.doc.lamps[lamp].name }, { cmd: 'veh-frame' }, { cmd: 'veh-look' }, { cmd: 'veh-study-visibility', label: 'Show its visibility' }, '-',
+        { cmd: 'veh-move' }, { cmd: 'veh-mirror' }, { cmd: 'veh-remove' }, '-', { cmd: 'veh-copy-lamp' }, { cmd: 'measure-here', label: 'Measure from its centre' },
+      ];
+    }
+    if (this.pick(x, y)) {
+      /** @type {MenuEntry[]} */
+      const roles = [];
+      for (const [facing, heading] of /** @type {const} */ ([['front', 'Front'], ['side', 'Side'], ['rear', 'Rear']])) {
+        roles.push({ heading }, ...Object.entries(INSTALL_ROLES).filter(([, d]) => d.facing === facing).map(([role, d]) => ({ cmd: `veh-place-${role}`, label: d.name })));
+      }
+      return [{ label: 'Add a lamp here', icon: 'plus', items: roles }, { cmd: 'centre-here' }, { cmd: 'measure-here' }, { cmd: 'copy-position' }, '-', ...view];
+    }
+    return [...view, '-', { cmd: 'veh-add' }];
+  }
+
+  /** The menu opens from the keyboard at the selected lamp. @returns {[number, number] | null} */
+  menuAnchor() {
+    const l = this.selected !== null ? this.doc.lamps[this.selected] : null;
+    const p = l ? this.current.project([l.x, l.y, l.z]) : null;
+    return p ? [p[0], p[1]] : null;
+  }
+
+  /** The model point under the pointer. @param {number} x @param {number} y */
+  position(x, y) {
+    if (!this.bounds || this.current.cubeAt(x, y)) return null;
+    const hit = this.pick(x, y);
+    return hit ? `x ${fmt(hit.point[0], 0)}, y ${fmt(hit.point[1], 0)}, z ${fmt(hit.point[2], 0)} mm` : null;
+  }
+
+  /** Measuring between model points, snapped to a lamp's centre of reference. @returns {MeasureAdapter | null} */
+  measure() {
+    if (!this.bounds) return null;
+    return {
+      point: (x, y) => {
+        const lamp = this.current.lampAt(x, y);
+        if (lamp !== null) { const l = this.doc.lamps[lamp]; return { p: [l.x, l.y, l.z], label: l.name }; }
+        const hit = this.pick(x, y);
+        return hit ? { p: hit.point } : null;
+      },
+      screen: m => this.current.project(m.p),
+      describe: (a, b) => {
+        const d = [0, 1, 2].map(k => b.p[k] - a.p[k]);
+        return [`${fmt(Math.hypot(d[0], d[1], d[2]), 0)} mm`, `x ${fmt(d[0], 0)}, y ${fmt(d[1], 0)}, z ${fmt(d[2], 0)} mm`];
+      },
+    };
+  }
+
+  /** A double-click on a lamp zooms to it. @param {number} x @param {number} y */
+  dblclick(x, y) {
+    if (this.current.cubeAt(x, y)) return true;
+    const lamp = this.current.lampAt(x, y);
+    if (lamp === null) return false;
+    this.select(lamp);
+    this.current.frameLamp(this.doc.lamps[lamp]);
+    return true;
   }
 }
 

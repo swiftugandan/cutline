@@ -7,7 +7,8 @@ import { AnalysisClient } from './worker/analysis-client.js';
 import { DesignWorkspace } from './workspaces/design.js';
 import { PhotometryWorkspace } from './workspaces/photometry.js';
 import { VehicleWorkspace } from './workspaces/vehicle.js';
-import { Commands, Ribbon, Toasts, Dialogs, installTooltips } from './ui/shell.js';
+import { Commands, Ribbon, Toasts, Dialogs, Menu, installTooltips } from './ui/shell.js';
+import { MeasureTool } from './ui/measure.js';
 import { byId, h, fmt, debounce, downloadBlob, fileName } from './ui/dom.js';
 import { hydrateIcons } from './ui/icons.js';
 import { readPref, writePref } from './ui/prefs.js';
@@ -26,6 +27,11 @@ export class CutlineApp {
     this.toasts = new Toasts();
     this.dialogs = new Dialogs();
     this.commands = new Commands();
+    this.menu = new Menu(this.commands, error => this.toasts.show(error instanceof Error ? error.message : String(error), { kind: 'error' }));
+    /** The canvas point the context menu was opened at, for commands that act on a place; null when it is closed.
+     * @type {[number, number] | null} */
+    this.menuPoint = null;
+    this.measure = new MeasureTool(() => this.onMeasure());
     this.root = byId('app');
     this.canvas = /** @type {HTMLCanvasElement} */ (byId('view'));
     this.viewport = byId('viewport');
@@ -74,9 +80,12 @@ export class CutlineApp {
   switchTo(id, force = false) {
     const next = this.workspaces[id];
     if (next === this.active && !force) return;
+    this.menu.close();
+    this.measure.stop();
     if (next !== this.active) {
       this.tabs[this.active.id] = this.ribbon.active;
       this.active.deactivate();
+      this.setStatus('Ready');
     }
     this.active = next;
     writePref('cutline-workspace', id);
@@ -117,7 +126,7 @@ export class CutlineApp {
     const { entries, hint } = this.active.legend();
     byId('viewLegend').replaceChildren(...entries.map(([label, colour, dashed]) => h('span', {}, [h('i', { style: dashed ? `background: repeating-linear-gradient(90deg, ${colour} 0 5px, transparent 5px 8px)` : `background: ${colour}` }), label])));
     byId('viewLegend').hidden = entries.length === 0;
-    byId('statusHint').textContent = hint;
+    byId('statusHint').textContent = this.measure.active ? this.measureHint() : hint;
     this.updateScale();
   }
 
@@ -138,7 +147,12 @@ export class CutlineApp {
   /** @param {string} view */
   setView(view) {
     const w = this.active;
+    this.menu.close();
+    this.measure.stop();
     w.setView(view);
+    // The shell draws the measure tool over whichever view is showing, and follows a camera that moves smoothly.
+    w.current.overlay = ctx => this.measure.draw(ctx);
+    w.current.onCamera = () => this.updateScale();
     for (const b of document.querySelectorAll('#viewSwitch [data-cmd]')) b.setAttribute('aria-pressed', String(/** @type {HTMLElement} */ (b).dataset.cmd === `view-${w.view}`));
     // Only the active workspace's canvases are shown.
     for (const c of this.viewport.querySelectorAll('canvas')) /** @type {HTMLElement} */ (c).hidden = c !== w.current.canvas && c !== w.current.glCanvas;
@@ -156,10 +170,11 @@ export class CutlineApp {
     else this.updateScale();
   }
 
-  fitView() {
+  /** @param {boolean} [animate] move the camera smoothly, for a fit the user asked for */
+  fitView(animate = false) {
     const view = this.active.current;
-    view.fit();
-    this.baseScale[this.viewKey] = view.camera.scale;
+    view.fit(animate);
+    this.baseScale[this.viewKey] = view.goal?.scale ?? view.camera.scale;
     this.updateScale();
   }
 
@@ -184,41 +199,70 @@ export class CutlineApp {
     byId('zoomLabel').textContent = `${fmt((scale / base) * 100, 0)}%`;
   }
 
-  /** Pan, zoom, hover read-outs and double-click to fit, for whichever view is showing. */
+  /** Pan, zoom, hover read-outs, the context menu, the measure tool and double-click to fit, for whichever view is
+   * showing. A workspace's interaction takes the pointer first; a right-click that does not drag, a Ctrl-click on a
+   * Mac or a long press opens the menu instead of clicking. */
   installCanvas() {
-    const viewport = this.viewport, tip = byId('viewTooltip');
-    /** @type {{ x: number, y: number, id: number, custom: boolean } | null} */
+    const viewport = this.viewport, tip = byId('viewTooltip'), position = byId('statusPosition');
+    const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    /** @type {{ x: number, y: number, x0: number, y0: number, custom: boolean, moved: boolean, menu: boolean, consumed: boolean, timer?: ReturnType<typeof setTimeout> } | null} */
     let drag = null;
     const hideTip = () => { tip.hidden = true; };
-    /** @param {PointerEvent} e */
+    /** @param {MouseEvent} e */
     const local = e => { const r = this.active.current.canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    viewport.addEventListener('contextmenu', e => { if (e.target instanceof HTMLCanvasElement) e.preventDefault(); });
     viewport.addEventListener('pointerdown', e => {
       if (!(e.target instanceof HTMLCanvasElement)) return;
+      this.menu.close();
       const [x, y] = local(e);
+      const menu = e.button === 2 || (mac && e.button === 0 && e.ctrlKey);
       const custom = !!this.active.interaction?.down?.(e, x, y);
-      drag = { x: e.clientX, y: e.clientY, id: e.pointerId, custom };
+      drag = { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, custom, moved: false, menu, consumed: false };
+      // A long press on a touch screen opens the menu.
+      if (e.pointerType === 'touch' && e.isPrimary) {
+        const d = drag;
+        d.timer = setTimeout(() => {
+          if (drag !== d || d.moved) return;
+          d.consumed = true;
+          if (d.custom) this.active.interaction?.cancel?.();
+          this.openMenu(x, y);
+        }, 550);
+      }
       e.target.setPointerCapture(e.pointerId);
       if (!custom) viewport.dataset.cursor = 'grabbing';
       hideTip();
     });
     /** @param {PointerEvent} e */
     const end = e => {
-      if (drag?.custom) { const [x, y] = local(e); this.active.interaction?.up?.(e, x, y); }
-      drag = null; viewport.dataset.cursor = 'grab';
+      const d = drag;
+      if (!d) return;
+      drag = null;
+      clearTimeout(d.timer);
+      const [x, y] = local(e);
+      const interaction = this.active.interaction;
+      if (e.type === 'pointercancel' || d.consumed) { if (d.custom) interaction?.cancel?.(); }
+      else if (!d.moved && d.menu) { if (d.custom) interaction?.cancel?.(); this.openMenu(x, y); }
+      else if (!d.moved && e.button === 0 && this.measure.active) { if (d.custom) interaction?.cancel?.(); this.measure.click(x, y); }
+      else if (d.custom) interaction?.up?.(e, x, y);
+      viewport.dataset.cursor = this.restCursor();
     };
     viewport.addEventListener('pointerup', end);
     viewport.addEventListener('pointercancel', end);
-    viewport.addEventListener('pointerleave', hideTip);
+    viewport.addEventListener('pointerleave', () => { hideTip(); if (!drag) position.textContent = ''; });
     viewport.addEventListener('pointermove', e => {
       if (!(e.target instanceof HTMLCanvasElement)) return;
       const [x, y] = local(e);
+      position.textContent = this.active.position?.(x, y) ?? '';
       if (drag) {
+        if (!drag.moved && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > (e.pointerType === 'touch' ? 6 : 3)) { drag.moved = true; clearTimeout(drag.timer); }
+        if (drag.consumed) return;
         if (drag.custom) { this.active.interaction?.move?.(e, x, y); return; }
         this.active.current.pan(e.clientX - drag.x, e.clientY - drag.y);
-        drag = { ...drag, x: e.clientX, y: e.clientY };
+        drag.x = e.clientX; drag.y = e.clientY;
         this.updateScale();
         return;
       }
+      if (this.measure.active) { this.measure.move(x, y); this.active.interaction?.move?.(e, x, y); hideTip(); return; }
       if (this.active.interaction?.move?.(e, x, y)) { hideTip(); return; }
       const html = this.active.readout(x, y);
       if (!html) { hideTip(); return; }
@@ -232,12 +276,78 @@ export class CutlineApp {
     viewport.addEventListener('wheel', e => {
       if (!(e.target instanceof HTMLCanvasElement)) return;
       e.preventDefault();
-      const [x, y] = local(/** @type {PointerEvent} */ (/** @type {unknown} */ (e)));
+      this.menu.close();
+      const [x, y] = local(e);
       this.active.current.zoom(Math.exp(-e.deltaY * 0.0015), x, y);
       this.updateScale();
     }, { passive: false });
-    viewport.addEventListener('dblclick', e => { if (e.target instanceof HTMLCanvasElement) this.fitView(); });
+    viewport.addEventListener('dblclick', e => {
+      if (!(e.target instanceof HTMLCanvasElement)) return;
+      const [x, y] = local(e);
+      if (!this.active.dblclick?.(x, y)) this.fitView(true);
+    });
     viewport.dataset.cursor = 'grab';
+  }
+
+  /** The canvas cursor between gestures. */
+  restCursor() { return this.measure.active ? 'crosshair' : this.active.cursor?.() ?? 'grab'; }
+
+  /**
+   * Opens the context menu of the active workspace at a canvas point.
+   * @param {number} x @param {number} y @param {boolean} [keyboard] opened from the keyboard: focus its first item
+   */
+  openMenu(x, y, keyboard = false) {
+    byId('viewTooltip').hidden = true;
+    const entries = this.active.menu?.(x, y);
+    if (!entries?.length) return;
+    this.menuPoint = [x, y];
+    const r = this.active.current.canvas.getBoundingClientRect();
+    const shown = this.menu.show(entries, r.left + x, r.top + y, { keyboard, onClose: () => { this.menuPoint = null; } });
+    if (!shown) this.menuPoint = null;
+  }
+
+  /** Opens the menu from the keyboard, at the selection or the middle of the view. */
+  openMenuFromKeyboard() {
+    const view = this.active.current;
+    const [x, y] = this.active.menuAnchor?.() ?? [view.width / 2, view.height / 2];
+    this.openMenu(x, y, true);
+  }
+
+  // ---------- Measuring ----------
+
+  onMeasure() {
+    this.active.current.request();
+    if (this.measure.active) byId('statusHint').textContent = this.measureHint();
+  }
+
+  measureHint() { return this.measure.text() || (this.measure.a ? 'Click the second point. Esc ends measuring.' : 'Click two points to measure between them. Esc ends measuring.'); }
+
+  /** Starts or ends the measure tool, optionally from a first point. @param {[number, number] | null} [from] */
+  toggleMeasure(from = null) {
+    if (this.measure.active && !from) { this.measure.stop(); this.endMeasure(); return; }
+    const adapter = this.active.measure?.();
+    if (!adapter) return;
+    this.active.cancelMode?.();
+    this.measure.start(adapter, from ? adapter.point(from[0], from[1]) : null);
+    this.viewport.dataset.cursor = this.restCursor();
+    this.renderLegend();
+    this.ribbon.refresh();
+  }
+
+  endMeasure() {
+    this.viewport.dataset.cursor = this.restCursor();
+    this.renderLegend();
+    this.ribbon.refresh();
+  }
+
+  /** @param {string} text */
+  async copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      this.setStatus(`Copied ${text}`);
+    } catch {
+      this.toasts.show('This browser did not allow copying to the clipboard.', { kind: 'error' });
+    }
   }
 
   /** @param {string} message */
@@ -291,8 +401,12 @@ export class CutlineApp {
 
   exportImage() {
     const view = this.active.current;
+    view.plain = true;
     view.draw();
-    view.canvas.toBlob(blob => { if (blob) downloadBlob(fileName(this.active.title(), ` ${this.active.view}.png`), blob); }, 'image/png');
+    const image = view.snapshot?.() ?? view.canvas;
+    view.plain = false;
+    view.request();
+    image.toBlob(blob => { if (blob) downloadBlob(fileName(this.active.title(), ` ${this.active.view}.png`), blob); }, 'image/png');
   }
 
   // ---------- Commands ----------
@@ -309,7 +423,12 @@ export class CutlineApp {
       { id: 'export-png', label: 'Image of view', icon: 'image', run: () => this.exportImage() },
       { id: 'undo', label: 'Undo', icon: 'undo', shortcut: 'Ctrl+Z', enabled: () => store().canUndo, run: () => store().undo() },
       { id: 'redo', label: 'Redo', icon: 'redo', shortcut: 'Ctrl+Shift+Z', enabled: () => store().canRedo, run: () => store().redo() },
-      { id: 'fit', label: 'Fit to view', icon: 'fit', shortcut: 'F', run: () => this.fitView() },
+      { id: 'fit', label: 'Fit to view', icon: 'fit', shortcut: 'F', run: () => this.fitView(true) },
+      { id: 'measure', label: 'Measure', icon: 'ruler', shortcut: 'D', hint: 'Click two points to measure between them', enabled: () => !!this.active.measure?.(), pressed: () => this.measure.active, run: () => this.toggleMeasure() },
+      // Commands that act on the place the context menu was opened at.
+      { id: 'measure-here', label: 'Measure from here', icon: 'ruler', palette: false, enabled: () => !!this.menuPoint && !!this.active.measure?.(), run: () => this.toggleMeasure(this.menuPoint) },
+      { id: 'centre-here', label: 'Centre here', icon: 'fit', palette: false, enabled: () => !!this.menuPoint, run: () => { const [x, y] = /** @type {[number, number]} */ (this.menuPoint); const v = this.active.current; if (v.centreOn) v.centreOn(x, y); else v.pan(v.width / 2 - x, v.height / 2 - y); this.updateScale(); } },
+      { id: 'copy-position', label: 'Copy the position', icon: 'pin', palette: false, enabled: () => !!this.menuPoint && !!this.active.position?.(...this.menuPoint), run: () => this.copyText(this.active.position?.(.../** @type {[number, number]} */ (this.menuPoint)) ?? '') },
       { id: 'zoom-in', label: 'Zoom in', icon: 'plus', shortcut: '+', run: () => { this.active.current.zoom(1.25); this.updateScale(); } },
       { id: 'zoom-out', label: 'Zoom out', icon: 'minus', shortcut: '−', run: () => { this.active.current.zoom(0.8); this.updateScale(); } },
       { id: 'toggle-theme', label: 'Dark theme', icon: 'moon', pressed: () => document.documentElement.dataset.theme === 'dark', run: () => { const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; writePref('cutline-theme', next); this.applyTheme(next); this.ribbon.refresh(); this.active.renderDock(); } },
@@ -356,6 +475,8 @@ export class CutlineApp {
       ['Fit the view', 'F or double-click'],
       ['Zoom', 'Scroll, or + and −'],
       ['Pan', 'Drag'],
+      ['Menu of what is under the pointer', 'Right-click, a long press, or Shift+F10'],
+      ['Measure between two points', 'D; Esc ends'],
       ['Help', 'F1 or ?'],
     ];
   }
@@ -366,17 +487,21 @@ export class CutlineApp {
       const typing = target.matches('input, textarea, select, [contenteditable="true"]');
       const mod = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
-      if (byId('dialog').hasAttribute('open')) return;
+      if (byId('dialog').hasAttribute('open') || this.menu.open) return;
       /** @param {string} id */
       const run = id => { e.preventDefault(); this.commands.run(id); };
+      if (!typing && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); this.openMenuFromKeyboard(); return; }
+      if (!typing && e.key === 'Escape' && this.measure.active) { e.preventDefault(); this.measure.stop(); this.endMeasure(); return; }
       if (mod && key === 'k') return run('palette');
       if (mod && key === 's') return run('save');
       if (mod && key === 'o') return run('open');
       if (mod && key === 'z' && !typing) return run(e.shiftKey ? 'redo' : 'undo');
       if (mod && key === 'y' && !typing) return run('redo');
       if (e.key === 'F1') return run('help');
+      if (mod && !typing && !e.altKey) { const own = this.active.key?.(`mod+${key}`, e); if (own) return run(own); }
       if (typing || mod || e.altKey) return;
       if (key === 'f') return run('fit');
+      if (key === 'd') return run('measure');
       const views = this.active.views();
       if (/^[1-9]$/.test(key) && views[Number(key) - 1]) return run(`view-${views[Number(key) - 1].id}`);
       if (key === '+' || key === '=') return run('zoom-in');

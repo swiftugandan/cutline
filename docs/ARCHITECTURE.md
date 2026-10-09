@@ -133,6 +133,24 @@ fixed; its colour scale (log or linear, fitted or fixed, palette, contour levels
 workspace's display settings. The road view runs the road left to right across the viewport. The vehicle view draws
 the model with WebGL 2 on a canvas beneath the 2D canvas, which carries the labels and takes the pointer.
 
+The vehicle view's orbit camera is a set of plain functions in `render/camera.js`, tested in Node: zoom about a point,
+orbit about a point, slide, fit and the smooth move between two cameras. The view picks a lamp by casting the
+pointer's ray against each apparent surface, with the model's own hit (from the workspace's BVH) as the depth test,
+and draws the view cube, the axes, outlines and the selected lamp's dimension lines on the 2D canvas.
+
+## The canvas
+
+The shell turns pointer and keyboard input on the canvas into calls on the active workspace
+(`src/workspaces/workspace.js` lists them). A workspace's `interaction` takes the pointer first; otherwise a drag pans
+the view and a hover shows the read-out. A right-click that does not drag, a Ctrl-click on a Mac, a long press or the
+Menu key opens the shell's `Menu` with the entries the workspace's `menu(x, y)` returns. Menu items are registered
+commands; a command that acts on a place reads `app.menuPoint`, which is set only while the menu is open. `position`
+fills the status bar with the point under the pointer. The measure tool (`ui/measure.js`) is the shell's; the
+workspace gives it an adapter for the view on screen (`ui/view-tools.js` has the beam, road and lamp ones), and each
+view calls its `overlay` hook at the end of every draw so the measurement follows the camera. A view drawn for an
+exported image or a report sets `plain` and leaves out these aids. [design/canvas.md](design/canvas.md) explains the
+choices.
+
 ## Single-file build
 
 `build.mjs` inlines the modules into a small `require` registry, embeds the fonts and the stylesheet, and turns the

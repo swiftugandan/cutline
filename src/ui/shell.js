@@ -94,6 +94,216 @@ export class Ribbon {
   }
 }
 
+/**
+ * A context menu entry: a registered command (with an optional label for this menu), a heading, a separator ('-'),
+ * or a submenu.
+ * @typedef {{ cmd: string, label?: string } | { heading: string } | '-' | { label: string, icon?: string, items: MenuEntry[] }} MenuEntry
+ */
+
+/** A context menu. Its items are [data-cmd] buttons for registered commands; the menu reads each command's enabled
+ * and pressed state, icon and shortcut. The menu's own delegated listener runs a chosen command, while the place the
+ * menu was opened at is still known, and then closes. */
+export class Menu {
+  /** @param {Commands} commands @param {(error: unknown) => void} onError */
+  constructor(commands, onError) {
+    this.commands = commands;
+    this.onError = onError;
+    /** The open menus, outermost first. @type {HTMLElement[]} */
+    this.levels = [];
+    /** @type {(() => void) | null} */
+    this.onClose = null;
+    /** @type {Element | null} */
+    this.returnFocus = null;
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    this.hoverTimer = undefined;
+    this.typed = '';
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    this.typedTimer = undefined;
+    const closeOutside = (/** @type {Event} */ e) => { if (this.open && !(e.target instanceof Node && this.levels.some(l => l.contains(/** @type {Node} */ (e.target))))) this.close(); };
+    document.addEventListener('pointerdown', closeOutside, true);
+    window.addEventListener('blur', () => this.close());
+    window.addEventListener('resize', () => this.close());
+  }
+
+  get open() { return this.levels.length > 0; }
+
+  /**
+   * Opens a menu at a window point.
+   * @param {MenuEntry[]} entries @param {number} x @param {number} y
+   * @param {{ keyboard?: boolean, onClose?: () => void }} [options] keyboard: focus the first item
+   */
+  show(entries, x, y, { keyboard = false, onClose } = {}) {
+    this.close();
+    const root = this.build(entries);
+    if (!root) return false;
+    this.returnFocus = document.activeElement;
+    this.onClose = onClose ?? null;
+    this.levels = [root];
+    document.body.append(root);
+    place(root, x, y);
+    if (keyboard) this.focusItem(root, 0); else root.focus({ preventScroll: true });
+    return true;
+  }
+
+  close() {
+    if (!this.open) return;
+    clearTimeout(this.hoverTimer);
+    const inside = this.levels.some(l => l.contains(document.activeElement));
+    for (const l of this.levels) l.remove();
+    this.levels = [];
+    if (inside && this.returnFocus instanceof HTMLElement && this.returnFocus.isConnected) this.returnFocus.focus({ preventScroll: true });
+    const done = this.onClose;
+    this.onClose = null;
+    done?.();
+  }
+
+  /** Builds one level, leaving out commands that do not apply now, empty submenus, and separators and headings with
+   * nothing under them. @param {MenuEntry[]} entries @returns {HTMLElement | null} */
+  build(entries) {
+    /** @type {HTMLElement[]} */
+    const nodes = [];
+    for (const entry of entries) {
+      if (entry === '-') { nodes.push(h('div', { class: 'menu-separator', role: 'separator' })); continue; }
+      if ('heading' in entry) { nodes.push(h('div', { class: 'menu-heading', role: 'presentation', text: entry.heading })); continue; }
+      if ('items' in entry) {
+        const sub = this.build(entry.items);
+        if (!sub) continue;
+        const item = h('button', { class: 'menu-item', type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'aria-expanded': 'false', tabindex: '-1' }, [
+          h('span', { 'data-icon': entry.icon ?? '' }), h('span', { class: 'menu-label', text: entry.label }), h('span', { class: 'menu-more', 'data-icon': 'chevron-right' }),
+        ]);
+        /** @type {HTMLElement & { submenu?: HTMLElement }} */ (item).submenu = sub;
+        nodes.push(item);
+        continue;
+      }
+      const command = this.commands.get(entry.cmd);
+      if (!command || !this.commands.allowed(command.id)) continue;
+      const pressed = command.pressed?.();
+      const item = h('button', {
+        class: 'menu-item', type: 'button', role: pressed === undefined ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': pressed === undefined ? undefined : String(pressed),
+        'data-cmd': command.id, tabindex: '-1', disabled: command.enabled ? !command.enabled() : false,
+      }, [h('span', { 'data-icon': pressed ? 'check' : pressed === false ? '' : command.icon ?? '' }), h('span', { class: 'menu-label', text: entry.label ?? command.label }), command.shortcut ? h('kbd', { text: command.shortcut }) : null]);
+      nodes.push(item);
+    }
+    // Headings only over an item; separators only between groups.
+    /** @param {HTMLElement | undefined} n @param {string} cls */
+    const is = (n, cls) => !!n && n.classList.contains(cls);
+    /** @type {HTMLElement[]} */
+    const kept = [];
+    nodes.forEach((n, i) => {
+      if (is(n, 'menu-heading') && !is(nodes[i + 1], 'menu-item')) return;
+      if (is(n, 'menu-separator') && (!kept.length || is(kept.at(-1), 'menu-separator'))) return;
+      kept.push(n);
+    });
+    while (is(kept.at(-1), 'menu-separator')) kept.pop();
+    if (!kept.some(n => n.classList.contains('menu-item'))) return null;
+    const menu = h('div', { class: 'context-menu', role: 'menu', tabindex: '-1' }, kept);
+    hydrateIcons(menu);
+    menu.addEventListener('pointermove', e => this.hover(menu, e));
+    menu.addEventListener('click', e => this.activate(menu, e));
+    menu.addEventListener('keydown', e => this.key(menu, e));
+    menu.addEventListener('contextmenu', e => e.preventDefault());
+    return menu;
+  }
+
+  /** @param {HTMLElement} menu */
+  items(menu) { return /** @type {HTMLButtonElement[]} */ ([...menu.children].filter(n => n.classList.contains('menu-item') && !(/** @type {HTMLButtonElement} */ (n)).disabled)); }
+
+  /** @param {HTMLElement} menu @param {number} index */
+  focusItem(menu, index) {
+    const items = this.items(menu);
+    if (!items.length) return;
+    items[(index + items.length) % items.length].focus({ preventScroll: false });
+  }
+
+  /** Closes the submenus deeper than a level. @param {HTMLElement} menu */
+  closeBelow(menu) {
+    const depth = this.levels.indexOf(menu);
+    if (depth < 0) return;
+    for (const l of this.levels.splice(depth + 1)) l.remove();
+    for (const b of menu.querySelectorAll('[aria-expanded="true"]')) b.setAttribute('aria-expanded', 'false');
+  }
+
+  /** @param {HTMLElement} menu @param {HTMLElement} item @param {boolean} focus */
+  openSub(menu, item, focus) {
+    const sub = /** @type {HTMLElement & { submenu?: HTMLElement }} */ (item).submenu;
+    if (!sub) return;
+    if (this.levels.includes(sub)) { if (focus) this.focusItem(sub, 0); return; }
+    this.closeBelow(menu);
+    item.setAttribute('aria-expanded', 'true');
+    this.levels.push(sub);
+    document.body.append(sub);
+    const r = item.getBoundingClientRect();
+    const w = sub.offsetWidth;
+    const right = r.right + w - 2 <= window.innerWidth - 4;
+    place(sub, right ? r.right - 2 : r.left - w + 2, r.top - 5);
+    if (focus) this.focusItem(sub, 0);
+  }
+
+  /** @param {HTMLElement} menu @param {PointerEvent} e */
+  hover(menu, e) {
+    if (e.pointerType === 'touch') return;
+    const item = e.target instanceof Element ? /** @type {HTMLButtonElement | null} */ (e.target.closest('.menu-item')) : null;
+    if (!item || item.disabled || document.activeElement === item) return;
+    item.focus({ preventScroll: true });
+    clearTimeout(this.hoverTimer);
+    this.hoverTimer = setTimeout(() => { if (item.getAttribute('aria-haspopup')) this.openSub(menu, item, false); else this.closeBelow(menu); }, 140);
+  }
+
+  /** A click: a submenu opens, or the command runs and the menu closes. @param {HTMLElement} menu @param {MouseEvent} e */
+  activate(menu, e) {
+    const item = e.target instanceof Element ? /** @type {HTMLButtonElement | null} */ (e.target.closest('.menu-item')) : null;
+    if (!item || item.disabled) return;
+    if (item.getAttribute('aria-haspopup')) { this.openSub(menu, item, e.detail === 0); return; }
+    // The command runs here rather than in the page's listener for [data-cmd], so it starts while the menu's place is
+    // still set; closing clears it.
+    e.stopPropagation();
+    const run = this.commands.run(item.dataset.cmd ?? '');
+    this.close();
+    run.catch(this.onError);
+  }
+
+  /** @param {HTMLElement} menu @param {KeyboardEvent} e */
+  key(menu, e) {
+    const items = this.items(menu);
+    const at = items.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement));
+    const depth = this.levels.indexOf(menu);
+    const stop = () => { e.preventDefault(); e.stopPropagation(); };
+    if (e.key === 'ArrowDown') { stop(); this.focusItem(menu, at + 1); }
+    else if (e.key === 'ArrowUp') { stop(); this.focusItem(menu, at < 0 ? -1 : at - 1); }
+    else if (e.key === 'Home') { stop(); this.focusItem(menu, 0); }
+    else if (e.key === 'End') { stop(); this.focusItem(menu, -1); }
+    else if (e.key === 'ArrowRight') { stop(); const item = items[at]; if (item?.getAttribute('aria-haspopup')) this.openSub(menu, item, true); }
+    else if ((e.key === 'ArrowLeft' || e.key === 'Escape') && depth > 0) { stop(); const parent = this.levels[depth - 1]; this.closeBelow(parent); this.focusParent(parent, menu); }
+    else if (e.key === 'Escape') { stop(); this.close(); }
+    else if (e.key === 'Tab') { stop(); this.close(); }
+    else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      stop();
+      // Type to jump: the next item whose label starts with what was typed in the last half second.
+      clearTimeout(this.typedTimer);
+      this.typed += e.key.toLowerCase();
+      this.typedTimer = setTimeout(() => { this.typed = ''; }, 500);
+      const label = (/** @type {HTMLElement} */ b) => (b.querySelector('.menu-label')?.textContent ?? '').toLowerCase();
+      const order = [...items.slice(at + (this.typed.length > 1 ? 0 : 1)), ...items.slice(0, at + (this.typed.length > 1 ? 0 : 1))];
+      order.find(b => label(b).startsWith(this.typed))?.focus();
+    }
+  }
+
+  /** Focuses the item in parent that opened sub. @param {HTMLElement} parent @param {HTMLElement} sub */
+  focusParent(parent, sub) {
+    const opener = this.items(parent).find(b => /** @type {HTMLElement & { submenu?: HTMLElement }} */ (b).submenu === sub);
+    opener?.focus();
+  }
+}
+
+/** Places a floating element at a window point, flipped and clamped to stay in the window. @param {HTMLElement} el @param {number} x @param {number} y */
+function place(el, x, y) {
+  const w = el.offsetWidth, ht = el.offsetHeight;
+  const left = x + w > window.innerWidth - 4 ? Math.max(4, Math.min(x - w, window.innerWidth - w - 4)) : x;
+  const top = y + ht > window.innerHeight - 4 ? Math.max(4, window.innerHeight - ht - 4) : y;
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(top)}px`;
+}
+
 /** Short-lived messages at the bottom of the window. */
 export class Toasts {
   constructor() { this.root = byId('toasts'); }

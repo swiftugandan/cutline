@@ -34,6 +34,14 @@ The app runs straight from `src/` with no build step. `npm run build` writes the
 
 Switch workspace at the top left. **Find any command** with Ctrl+K, and press F1 for each workspace's shortcuts.
 
+**Work on the canvas.** Right-click anything in a view (or press and hold on a touch screen, or press Shift+F10) for
+the commands that apply to it: a test point on the beam finds its row in the table, a point on the beam becomes a
+target, a lamp on the vehicle zooms to it or mirrors, and a point on the model takes a new lamp. The status bar shows
+the position under the pointer in the view's own terms; "Copy the position" puts it on the clipboard. **Measure**
+(D) gives the angle and intensities between two directions on the beam, the distance between two points on the road
+or in the lamp's sections, and the distance between two points on the vehicle, snapping to test points and lamp
+centres.
+
 ### Lamp design
 
 **Change the design.** Every value lives in the Design panel on the right: the beam class and traffic side, the
@@ -86,9 +94,15 @@ browser and print to PDF. The results table downloads the same as CSV.
 first be exported as one of these from your CAD system. Set the model's units and its forward and up axes, the ground,
 and the vehicle's overall width (which R48 measures without the mirrors).
 
-**Place the lamps.** Add a lamp, choose its function, and click the model where its centre of reference is. Set the
-size of its apparent surface; Mirror adds its twin on the other side. Drag to turn the view, Shift-drag to move it,
-and use the View tab for front, rear, side and top views.
+**Place the lamps.** Right-click the model where a lamp's centre of reference is and choose its function, or use Add
+a lamp and click the model. Set the size of its apparent surface; Mirror adds its twin on the other side, if it has none yet. Drag a lamp
+to move it across the model: it snaps to its twin's mirror image (Alt stops that), and with Shift held its twin moves
+too. The arrow keys nudge the selected lamp 1 mm at a time (10 mm with Shift). The selected lamp's heights, distance
+from the outer edge and separation are drawn on the model, in the colour of their result.
+
+**Look around.** Drag to turn the view about the point under the pointer, right-drag (or Shift-drag) to move it, and
+scroll to zoom towards the pointer. Click a face of the cube at the top right for a standard view, double-click a lamp
+or press Z to zoom to it, and press X to see through the body to lamps behind it. Orthographic view shows a scale bar.
 
 **Check it.** The Installation study lists every check of UN R48 and FMVSS 108 for each lamp: presence and number for
 the vehicle's category, height, distance from the outer edge, separation, and visibility. Visibility is found by
@@ -103,6 +117,8 @@ it, and the 3D view draws the field, with hidden directions in red. The report h
 | Open a file | Ctrl+O, or drop it on the window |
 | Switch view | 1, 2 or 3 |
 | Fit the view | F, or double-click |
+| Menu of what is under the pointer | Right-click, a long press, or Shift+F10 |
+| Measure between two points | D; Esc ends |
 | Help and each workspace's shortcuts | F1 or ? |
 
 ## Saving and files
@@ -129,7 +145,8 @@ an IES file.
   measures a beam, how it checks a vehicle, and where it had to choose. The research behind each, with every source,
   is in [docs/research/](docs/research/).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how the pieces fit together, and
-  [docs/design/workbench.md](docs/design/workbench.md) why the photometry and vehicle workspaces are built as they are.
+  [docs/design/workbench.md](docs/design/workbench.md) why the photometry and vehicle workspaces are built as they are,
+  and [docs/design/canvas.md](docs/design/canvas.md) how the canvas menus, camera and tools work.
 
 ## For developers
 
@@ -150,7 +167,8 @@ an IES file.
 | The road | `src/core/road.js` |
 | The optimiser | `src/core/optimise.js`, `src/ui/optimise-view.js` |
 | Work across cores | `src/worker/` |
-| The views | `src/render/` (`beam-view.js`, `road-view.js`, `lamp-view.js`, `vehicle-view.js`, `palettes.js`) |
+| The views | `src/render/` (`beam-view.js`, `road-view.js`, `lamp-view.js`, `vehicle-view.js`, `palettes.js`); the 3D camera in `camera.js` |
+| Canvas menus, the measure tool, positions | `src/ui/shell.js` (`Menu`), `src/ui/measure.js`, `src/ui/view-tools.js`, each workspace's `menu()` |
 | The dock | `src/ui/compliance-view.js`, `budget-view.js`, `road-panel.js`, `photometry-views.js`, `vehicle-views.js` |
 | Reports | `src/ui/report.js`, `src/ui/vehicle-report.js` |
 | The design panel | `src/ui/inspector.js` |
@@ -161,7 +179,7 @@ an IES file.
 
 ```sh
 npm run check        # strict type checking of the JSDoc-typed source (page and worker separately)
-npm test             # optics, regulation, packs, imported files, uniformity, vehicle, features, lamps, schemas
+npm test             # optics, regulation, packs, imported files, uniformity, vehicle, 3D camera, features, lamps, schemas
 python3 tests/browser_test.py   # end-to-end checks in Chromium; needs `npm start` running
 ```
 

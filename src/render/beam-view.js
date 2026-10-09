@@ -87,6 +87,10 @@ export class BeamView {
     this.active = false;
     /** Pixels per CSS pixel, when drawing somewhere other than the screen; null follows the screen. @type {number | null} */
     this.dpr = null;
+    /** The shell's drawing over the view, in CSS pixels. @type {((ctx: CanvasRenderingContext2D) => void) | null} */
+    this.overlay = null;
+    /** Draw without on-screen aids, for an exported image. */
+    this.plain = false;
   }
 
   resize() {
@@ -229,6 +233,8 @@ export class BeamView {
     this.drawLines();
     this.drawCutoff();
     this.drawMarkers();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!this.plain) this.overlay?.(ctx);
   }
 
   drawLines() {

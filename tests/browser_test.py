@@ -40,6 +40,19 @@ def wait_study(page):
         raise AssertionError(f'the photometry study did not settle: {state}')
 
 
+def canvas_point(page, expr):
+    """The window position of a canvas point given by a JavaScript expression of the active view."""
+    return page.evaluate(f'() => {{ const v = window.cutline.active.current, r = v.canvas.getBoundingClientRect(), p = {expr}; return [r.left + p[0], r.top + p[1]]; }}')
+
+
+def lamp_point(page, index):
+    return canvas_point(page, f'(() => {{ const l = window.cutline.vehicle.doc.lamps[{index}]; return v.project([l.x, l.y, l.z]); }})()')
+
+
+def menu_labels(page):
+    return page.evaluate("() => [...document.querySelectorAll('.context-menu .menu-heading, .context-menu .menu-label')].map(e => e.textContent)")
+
+
 def walk_ribbon(page, skip, undo_to):
     """Clicks every enabled ribbon button on every tab of the active workspace; returns the ones that ran nothing.
     After each click the active workspace's store is undone back to undo_to commands."""
@@ -61,7 +74,7 @@ def walk_ribbon(page, skip, undo_to):
             if os.environ.get('DEBUG_WALK'):
                 print(cmd, page.evaluate("() => { const s = window.cutline.active.store; return [s.undoStack.map(x => x.label + '=' + x.bytes), s.bytes]; }"))
             page.evaluate(f'() => {{ const s = window.cutline.active.store; while (s.undoStack.length > {undo_to}) s.undo(); }}')
-            if cmd.startswith('toggle-') or cmd in ('ph-pick-target', 'ph-contours'):
+            if cmd.startswith('toggle-') or cmd in ('ph-pick-target', 'ph-contours', 'measure', 'veh-ortho', 'veh-xray', 'veh-dims', 'veh-fields'):
                 page.evaluate(f'() => window.cutline.commands.run("{cmd}")')
     return unrouted
 
@@ -99,6 +112,31 @@ with sync_playwright() as p:
     first = page.locator('.req-row').first
     first.hover()
     check('pointing at a requirement selects it in the beam view', page.evaluate('() => window.cutline.design.beamView.selected') == first.get_attribute('data-id'))
+
+    # Right-click a test point on the beam: its menu finds it in the table.
+    marker = page.evaluate('() => { const m = window.cutline.design.beamView.markers.find(m => m.id !== window.cutline.design.beamView.markers[0].id) ?? window.cutline.design.beamView.markers[0]; return { id: m.id, label: m.label, h: m.h, v: m.v }; }')
+    at = canvas_point(page, f'v.toScreen({marker["h"]}, {marker["v"]})')
+    page.mouse.move(at[0], at[1]); page.mouse.click(at[0], at[1], button='right')
+    labels = menu_labels(page)
+    check('right-clicking a test point opens a menu headed by it', labels[:2] == [marker['label'], 'Show it in the table'], labels)
+    page.screenshot(path=str(OUT / 'desktop-beam-menu.png'))
+    page.locator('.context-menu .menu-item', has_text='Show it in the table').click()
+    page.wait_for_function('!document.querySelector(".context-menu")', timeout=2000)
+    check('"Show it in the table" picks out its row', page.evaluate(f'() => document.activeElement?.dataset?.id') == marker['id'] and page.evaluate('() => window.cutline.design.beamView.selected') == marker['id'])
+    page.keyboard.press('Shift+F10')
+    check('Shift+F10 opens the canvas menu from the keyboard, focused on its first item', page.evaluate('() => document.activeElement?.classList.contains("menu-item")'))
+    page.keyboard.press('Escape')
+    check('Escape closes the menu', page.locator('.context-menu').count() == 0)
+    # The measure tool: the angle between two directions.
+    page.keyboard.press('d')
+    # Well away from the test points, which the tool snaps to.
+    a = canvas_point(page, 'v.toScreen(-38, 6)'); b = canvas_point(page, 'v.toScreen(-35, 2)')
+    page.mouse.click(a[0], a[1]); page.mouse.move(b[0], b[1]); page.mouse.click(b[0], b[1])
+    measured = page.evaluate('() => window.cutline.measure.text()')
+    check('the measure tool gives the angle between two directions on the beam', measured.startswith('5.00° apart') or measured.startswith('4.99° apart'), measured)
+    page.screenshot(path=str(OUT / 'desktop-beam-measure.png'))
+    page.keyboard.press('Escape')
+    check('Escape ends measuring', not page.evaluate('() => window.cutline.measure.active'))
 
     # Type a value, then an out-of-range value.
     default_flux = page.evaluate('() => window.cutline.design.store.doc.led.flux')
@@ -205,6 +243,13 @@ with sync_playwright() as p:
     wait_study(page)
     target = page.evaluate('() => window.cutline.photometry.analysis.targets[0]')
     check('a target picked on the beam is added and judged', target is not None and target['status'] in ('pass', 'near'), target)
+    targets = page.evaluate('() => window.cutline.photometry.store.doc.targets.length')
+    page.locator('#view').click(position={'x': 520, 'y': 150}, button='right')
+    page.locator('.context-menu .menu-item', has_text='Add a target here').click()
+    page.wait_for_function(f'window.cutline.photometry.store.doc.targets.length === {targets + 1}', timeout=5000)
+    added = page.evaluate('() => { const t = window.cutline.photometry.store.doc.targets.at(-1), [h, v] = window.cutline.photometry.beamView.toAngles(520, 150); return Math.hypot(t.h0 - h, t.v0 - v); }')
+    check('"Add a target here" adds a target where the menu was opened', added < 0.01, added)
+    wait_study(page)
     page.screenshot(path=str(OUT / 'photometry-targets.png'))
     page.click('.study[data-study="road"]')
     page.wait_for_timeout(300)
@@ -247,7 +292,7 @@ with sync_playwright() as p:
     check('the sample vehicle draws in 3D', page.evaluate('() => window.cutline.vehicle.current.unavailable') is None)
     # Lamps are placed as a click on the model places them.
     page.evaluate('''() => { const w = window.cutline.vehicle;
-      const add = (role, p, n) => { w.placing = { role }; w.place(p, n); };
+      const add = (role, p, n) => { w.mode = { kind: 'placing', target: { role } }; w.place(p, n); };
       add('passing', [70, 620, 650], [1, 0, 0]); w.mirror();
       add('turn-front', [70, 780, 420], [1, 0, 0]); w.mirror();
       add('stop', [-4450, 600, 700], [-1, 0, 0]); w.mirror();
@@ -256,7 +301,83 @@ with sync_playwright() as p:
     heights = page.evaluate('() => window.cutline.vehicle.results[0].items.filter(i => i.id.startsWith("passing:0:height")).map(i => i.value)')
     check('R48 measures a lamp\'s height to the edges of its apparent surface', heights == [620, 680], heights)
     check('the installation table lists every check', page.locator('#dock .req-row').count() == page.evaluate('() => window.cutline.vehicle.results.find(r => r.pack === window.cutline.vehicle.pack).items.length'))
+    page.evaluate("() => document.querySelectorAll('.toast').forEach(t => t.remove())")
     page.screenshot(path=str(OUT / 'vehicle-checks.png'))
+    with page.expect_download() as image:
+        page.evaluate('() => window.cutline.commands.run("export-png")')
+    shot = page.evaluate('''async url => { const img = new Image(); img.src = url; await img.decode(); const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+      const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0); const d = ctx.getImageData(0, 0, c.width, c.height).data; let opaque = 0; for (let i = 3; i < d.length; i += 4) if (d[i] === 255) opaque++; return opaque / (d.length / 4); }''',
+      'data:image/png;base64,' + __import__('base64').b64encode(Path(image.value.path()).read_bytes()).decode())
+    check('the image of the 3D view holds the model, not only its labels', shot > 0.99, shot)
+
+    # The 3D canvas: menus, zoom and orbit about the pointer, the view cube, dragging and nudging a lamp, measuring.
+    vw = 'window.cutline.vehicle'
+    at = lamp_point(page, 2)
+    page.mouse.move(at[0], at[1])
+    check('pointing at a lamp lights it', page.evaluate(f'() => {vw}.current.hover') == 2)
+    page.mouse.click(at[0], at[1], button='right')
+    labels = menu_labels(page)
+    check('right-clicking a lamp selects it and opens its menu', page.evaluate(f'() => {vw}.selected') == 2 and labels[0] == page.evaluate(f'() => {vw}.doc.lamps[2].name') and 'Zoom to the lamp' in labels, labels)
+    page.screenshot(path=str(OUT / 'vehicle-lamp-menu.png'))
+    page.keyboard.press('Escape')
+    before = lamp_point(page, 2)
+    page.mouse.move(before[0], before[1]); page.mouse.wheel(0, -400); page.wait_for_timeout(100)
+    after = lamp_point(page, 2)
+    check('the wheel zooms about the point under the pointer', math.dist(before, after) < 1.5 and page.evaluate(f'() => {vw}.current.camera.distance') < 9000, [before, after])
+    page.keyboard.press('f'); page.wait_for_timeout(450)
+    distance = page.evaluate(f'() => {vw}.current.camera.distance')
+    page.keyboard.press('z'); page.wait_for_timeout(450)
+    check('Z zooms to the selected lamp', page.evaluate(f'() => {vw}.current.camera.distance') < distance / 3)
+    page.screenshot(path=str(OUT / 'vehicle-dimensions.png'))
+    dims = page.evaluate(f'''() => {{ const w = {vw}, r = w.results.find(r => r.pack === w.pack), l = w.doc.lamps[2];
+      const values = r.items.filter(i => (i.lamp === 2 && (i.check === "height" || i.check === "width")) || (i.check === "separation" && i.role === l.role)).map(i => Math.round(i.value).toLocaleString("en-GB") + " mm");
+      return {{ drawn: w.current.dims.map(d => d.text), values }}; }}''')
+    check('the selected lamp\'s dimensions are drawn with its results\' values', len(dims['drawn']) >= 2 and all(t in dims['values'] for t in dims['drawn']), dims)
+    page.keyboard.press('f'); page.wait_for_timeout(450)
+    # Drag a lamp across the model: it follows the surface, and the move is one undo step.
+    undo_count = page.evaluate(f'() => {vw}.store.undoStack.length')
+    start = page.evaluate(f'() => {{ const l = {vw}.doc.lamps[0]; return [l.x, l.y, l.z]; }}')
+    at = lamp_point(page, 0)
+    page.mouse.move(at[0], at[1]); page.mouse.down()
+    for k in range(1, 9): page.mouse.move(at[0] - k * 2, at[1] - k * 2)
+    page.mouse.up()
+    moved = page.evaluate(f'() => {{ const l = {vw}.doc.lamps[0]; return [l.x, l.y, l.z]; }}')
+    check('dragging a lamp moves it across the model as one undo step', moved != start and page.evaluate(f'() => {vw}.store.undoStack.length') == undo_count + 1 and page.evaluate(f'() => {vw}.store.undoLabel') == 'Move a lamp', [start, moved])
+    page.keyboard.press('Control+z')
+    check('undo puts the dragged lamp back', page.evaluate(f'() => {{ const l = {vw}.doc.lamps[0]; return [l.x, l.y, l.z]; }}') == start)
+    # Hold an arrow: the nudges are one undo step.
+    page.evaluate(f'() => {vw}.select(0)')
+    page.evaluate('() => document.activeElement?.blur()')
+    z0 = page.evaluate(f'() => {vw}.doc.lamps[0].z')
+    undo_count = page.evaluate(f'() => {vw}.store.undoStack.length')
+    page.keyboard.down('ArrowUp'); page.keyboard.down('ArrowUp'); page.keyboard.down('ArrowUp'); page.keyboard.up('ArrowUp')
+    check('holding an arrow nudges the lamp up 1 mm a step, as one undo step', page.evaluate(f'() => {vw}.doc.lamps[0].z') == z0 + 3 and page.evaluate(f'() => {vw}.store.undoStack.length') == undo_count + 1)
+    page.keyboard.press('Control+z')
+    # Right-click the model: add a lamp there.
+    count = page.evaluate(f'() => {vw}.doc.lamps.length')
+    at = canvas_point(page, 'v.project([-2200, 0, 1290])')
+    page.mouse.click(at[0], at[1], button='right')
+    page.locator('.context-menu .menu-item', has_text='Add a lamp here').hover()
+    page.locator('.context-menu .menu-item', has_text='High-mounted stop lamp').click()
+    page.wait_for_function(f'{vw}.doc.lamps.length === {count + 1}', timeout=3000)
+    placed = page.evaluate(f'''() => {{ const w = {vw}, l = w.doc.lamps.at(-1), r = w.current.canvas.getBoundingClientRect(), p = w.pick({at[0]} - r.left, {at[1]} - r.top).point;
+      return [l.role, Math.hypot(l.x - p[0], l.y - p[1], l.z - p[2])]; }}''')
+    check('"Add a lamp here" places the chosen function on the model where the menu was opened', placed[0] == 'high-mounted-stop' and placed[1] < 2, placed)
+    page.keyboard.press('Control+z')
+    # The view cube's front face gives the front view.
+    face = page.evaluate(f'() => {{ const c = {vw}.current.cube(), f = c.faces.find(f => f.id === "front"); const r = {vw}.current.canvas.getBoundingClientRect(); return [r.left + f.centre[0], r.top + f.centre[1]]; }}')
+    page.mouse.click(face[0], face[1]); page.wait_for_timeout(450)
+    check('clicking the view cube\'s front face looks from the front', abs(math.cos(page.evaluate(f'() => {vw}.current.camera.yaw')) - 1) < 1e-6)
+    # Measure between two lamp centres.
+    page.keyboard.press('d')
+    a = lamp_point(page, 0); b = lamp_point(page, 1)
+    page.mouse.click(a[0], a[1]); page.mouse.move(b[0], b[1]); page.mouse.click(b[0], b[1])
+    span = page.evaluate(f'() => {{ const [p, q] = {vw}.doc.lamps; return Math.round(Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z)).toLocaleString("en-GB"); }}')
+    measured = page.evaluate('() => window.cutline.measure.text()')
+    check('the measure tool snaps to lamp centres and gives the distance between them', measured.startswith(f'{span} mm'), [measured, span])
+    page.screenshot(path=str(OUT / 'vehicle-measure.png'))
+    page.keyboard.press('Escape')
+    page.evaluate(f'() => {{ {vw}.current.preset("iso", false); {vw}.select(0); }}')
     page.click('.study[data-study="visibility"]')
     check('the selected lamp shows its visibility map', page.locator('#dock .visibility-map rect').count() > 20)
     page.screenshot(path=str(OUT / 'vehicle-visibility.png'))
@@ -278,6 +399,16 @@ with sync_playwright() as p:
     overflow = mpage.evaluate('() => document.documentElement.scrollWidth - window.innerWidth')
     check('the phone layout has no horizontal overflow', overflow <= 0, overflow)
     mpage.screenshot(path=str(OUT / 'mobile.png'))
+    # A long press opens the canvas menu, inside the screen.
+    box = mpage.locator('#view').bounding_box()
+    cdp = mobile.new_cdp_session(mpage)
+    point = {'x': box['x'] + box['width'] / 2, 'y': box['y'] + box['height'] / 2}
+    cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [point]})
+    mpage.wait_for_timeout(750)
+    cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+    menu = mpage.locator('.context-menu').bounding_box() if mpage.locator('.context-menu').count() else None
+    check('a long press opens the canvas menu on a phone, inside the screen', menu is not None and menu['x'] >= 0 and menu['x'] + menu['width'] <= 390, menu)
+    mpage.screenshot(path=str(OUT / 'mobile-menu.png'))
     check('no page errors on a phone', not merrors, merrors)
     browser.close()
 
