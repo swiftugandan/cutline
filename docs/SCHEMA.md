@@ -58,7 +58,7 @@ A photometry study is one JSON document, downloaded as `.photometry.json` and de
 
 | Field | Meaning |
 |---|---|
-| `source` | The file's name and its full text (IES or EULUMDAT, up to 48 MB) |
+| `source` | The file's name and its full text (IES or EULUMDAT, up to 256 MB) |
 | `mapping` | How the file's angles map to Cutline's frame: the photometry type (`"file"` takes the file's own), the Type C axis plane and direction, and a left–right mirror |
 | `lamp` | The lamp's role, the traffic side it is made for, how to treat the other side, which side is outwards for a signal lamp, the aim (laboratory or as measured, with shifts in degrees), R149's horizontal aiming method and the source flux |
 | `conditions` | Facts declared about the lamp, as `"pack:condition"`, such as `"r148:low-mounting"` |

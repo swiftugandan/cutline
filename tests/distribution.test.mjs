@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseIes, writeIesTypeA, PhotometryFileError } from '../src/core/distribution/ies.js';
 import { parseEulumdat } from '../src/core/distribution/eulumdat.js';
-import { parseDistribution, intensityFunction, toHistograms, nativeAngles, photometricTypeOf, DEFAULT_MAPPING } from '../src/core/distribution/distribution.js';
+import { parseDistribution, intensityFunction, toHistograms, nativeAngles, photometricTypeOf, DEFAULT_MAPPING, MAX_FILE_BYTES } from '../src/core/distribution/distribution.js';
 import { Beam } from '../src/core/regulation/evaluate.js';
 import { measureRequirements } from '../src/core/regulation/engine.js';
-import { defaultStudy } from '../src/core/study.js';
+import { defaultStudy, validateStudy } from '../src/core/study.js';
 import { analyseStudy } from '../src/core/study-analysis.js';
 
 const RAD = Math.PI / 180, DEG = 180 / Math.PI;
@@ -133,4 +133,23 @@ test('an FMVSS visually aimed lower beam is aimed by the cut-off side the engine
   // CMVSS 108 stands on FMVSS 108's data, so it shares the declaration.
   study.markets = [{ pack: 'cmvss108', fn: 'lower-LB1V', traffic: 'right' }];
   assert.match(aimOf(['fmvss108:vor']).method, /VOR/);
+});
+
+test('a measurement file of 70 MB opens, and only a file over the one size limit is refused', () => {
+  const small = ies(3, range(-10, 10, 1), range(-5, 5, 1), () => 100);
+  const big = small + ' '.repeat(70 * 1024 * 1024);
+  assert.ok(MAX_FILE_BYTES >= 256 * 1024 * 1024);
+  assert.equal(parseDistribution(big, 'big.ies').type, 'A');
+  const study = defaultStudy();
+  study.source = { name: 'big.ies', text: big };
+  assert.equal(validateStudy(study).source.text.length, big.length);
+  const over = small + ' '.repeat(MAX_FILE_BYTES + 1 - small.length);
+  assert.throws(() => parseDistribution(over, 'over.ies'), /over\.ies is larger than 256 MB/);
+  study.source = { name: 'over.ies', text: over };
+  assert.throws(() => validateStudy(study));
+});
+
+test('an IES header claiming more values than the file holds is refused before the table is read', () => {
+  const text = ['IESNA:LM-63-2002', 'TILT=NONE', '1 -1 1 100000 100000 3 2 0 0 0', '1 1 0', '0 1 2'].join('\n');
+  assert.throws(() => parseIes(text, 'liar.ies'), /liar\.ies ends early: its header gives 100000 × 100000 values/);
 });

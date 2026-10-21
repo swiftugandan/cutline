@@ -59,7 +59,7 @@
         },
         "text": {
           "type": "string",
-          "maxLength": 50331648,
+          "maxLength": 268435456,
           "description": "File contents"
         }
       }

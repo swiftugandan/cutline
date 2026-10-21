@@ -6,6 +6,7 @@
 import { number, string, constant, choice, object, list, array, flag, validate, ValidationError } from './spec.js';
 import { ROLES, PACKS, packById, functionById, defaultMarkets, isHeadlampRole } from './regulation/catalog.js';
 import { CONTOUR_LEVELS } from './photometry.js';
+import { MAX_FILE_BYTES } from './distribution/distribution.js';
 
 /** @import { Role, Market } from './regulation/catalog.js' */
 
@@ -47,7 +48,7 @@ export const STUDY_SPEC = object('Cutline photometry study', {
   notes: string('Notes', 20000),
   source: object('Light distribution', {
     name: string('File name', 260),
-    text: string('File contents', 48 * 1024 * 1024),
+    text: string('File contents', MAX_FILE_BYTES),
   }),
   mapping: object('Angles', {
     system: choice('Photometry type', { file: 'From file', A: 'Type A', B: 'Type B', C: 'Type C' }, 'How the file\'s angles are drawn. Type A: horizontal angle about a vertical axis, then elevation (the R149 goniometer). Type B: tilt about a horizontal axis, then the angle across. Type C: angle from the nadir in planes about the vertical axis'),

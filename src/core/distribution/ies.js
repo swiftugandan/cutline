@@ -62,7 +62,9 @@ export function parseIes(text, name = 'The file') {
   const type = TYPES[typeCode];
   if (!type) throw new PhotometryFileError(`${name} has photometric type ${typeCode}; IES files use 1 (Type C), 2 (Type B) or 3 (Type A).`);
   if (!(nv >= 1 && nh >= 1 && Number.isInteger(nv) && Number.isInteger(nh))) throw new PhotometryFileError(`${name} gives ${nv} vertical and ${nh} horizontal angles.`);
-  if (nv * nh > 4_000_000) throw new PhotometryFileError(`${name} has ${nv} × ${nh} values, more than Cutline reads (4 million).`);
+  // The file's own size bounds the table (distribution.js MAX_FILE_BYTES); a header claiming more values than follow it
+  // is refused before the table is allocated.
+  if (nv + nh + nv * nh > tokens.length - k) throw new PhotometryFileError(`${name} ends early: its header gives ${nv} × ${nh} values, more than the file holds.`);
   const vertical = Array.from({ length: nv }, next), horizontal = Array.from({ length: nh }, next);
   checkAscending(vertical, 'vertical', name); checkAscending(horizontal, 'horizontal', name);
   // Before LM-63-2002 the second of these three numbers was the ballast-lamp photometric factor, which scales the candela.

@@ -31,6 +31,14 @@ export const FILE_GRIDS = /** @type {GridSpec[]} */ ([
   { hMin: -30, hMax: 30, vMin: -10, vMax: 10, step: 0.05, vStep: 0.05 },
 ]);
 
+/** The largest light distribution file Cutline opens: 256 MB, for goniometer measurements at fine steps, which often
+ * run to 70 MB or more. The one limit holds for the file's size in bytes and its text's length, because UTF-8 text
+ * never has more UTF-16 code units than bytes. */
+export const MAX_FILE_BYTES = 256 * 1024 * 1024;
+
+/** The message for a file over MAX_FILE_BYTES. @param {string} name */
+export const tooLarge = name => `${name} is larger than ${MAX_FILE_BYTES / (1024 * 1024)} MB.`;
+
 export const DEFAULT_MAPPING = /** @type {Mapping} */ ({ system: 'file', axisC: 0, cTurn: 'left', mirror: false });
 
 /**
@@ -39,7 +47,7 @@ export const DEFAULT_MAPPING = /** @type {Mapping} */ ({ system: 'file', axisC: 
  * @returns {Distribution}
  */
 export function parseDistribution(text, name) {
-  if (text.length > 64 * 1024 * 1024) throw new PhotometryFileError(`${name} is larger than 64 MB.`);
+  if (text.length > MAX_FILE_BYTES) throw new PhotometryFileError(tooLarge(name));
   if (/^\s*(IESNA|\[)/i.test(text) || /^TILT\s*=/im.test(text)) return parseIes(text, name);
   if (/\.ldt$/i.test(name)) return parseEulumdat(text, name);
   try { return parseIes(text, name); } catch { return parseEulumdat(text, name); }

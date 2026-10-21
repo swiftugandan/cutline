@@ -6,7 +6,7 @@ import { DocumentStore } from '../core/history.js';
 import { STUDY_SPEC, defaultStudy, validateStudy, parseStudy, serializeStudy, setRole } from '../core/study.js';
 import { ROLES, isHeadlampRole, packById, NOT_CHECKED } from '../core/regulation/catalog.js';
 import { localRatio, findDips } from '../core/uniformity.js';
-import { photometricTypeOf } from '../core/distribution/distribution.js';
+import { photometricTypeOf, MAX_FILE_BYTES, tooLarge } from '../core/distribution/distribution.js';
 import { gridSize } from '../core/tracer.js';
 import { screenLux, SCREEN_DISTANCE } from '../core/photometry.js';
 import { BeamView } from '../render/beam-view.js';
@@ -577,7 +577,7 @@ export class PhotometryWorkspace {
         this.app.toasts.show(`Opened “${study.title}”`);
         return;
       }
-      if (file.size > 48 * 1024 * 1024) throw new Error('It is larger than 48 MB.');
+      if (file.size > MAX_FILE_BYTES) throw new Error(tooLarge('It'));
       await this.loadDistribution(await file.text(), file.name);
     } catch (error) {
       this.app.toasts.show(`${file.name} could not be opened. ${error instanceof Error ? error.message : error}`, { kind: 'error', ms: 8000 });
