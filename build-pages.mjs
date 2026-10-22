@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { buildApp } from './build.mjs';
 import { study, beamPng, beamOverlay, shareBelowLineB, scanChart, sectionSvg, FRAME } from './scripts/site-data.mjs';
 import { APP_VERSION, defaultDesign } from './src/core/model.js';
+import { SCHEMAS, schemaFileName } from './src/core/schema.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const out = join(root, '_site');
@@ -72,8 +73,10 @@ export async function buildSite() {
   const met = e.items.filter(i => i.status === 'pass' || i.status === 'near').length;
   const g = e.items.find(i => i.id === 'Sharpness');
   const favicon = `data:image/svg+xml,${encodeURIComponent(await readFile(join(root, 'favicon.svg'), 'utf8'))}`;
+  /** Each document's published schema, by name, so the page links the current version: {{designSchema}} and so on. */
+  const schemas = Object.fromEntries(SCHEMAS.map(entry => [`${entry.name}Schema`, schemaFileName(entry)]));
   const values = {
-    version: APP_VERSION, repo: REPO_URL, favicon,
+    version: APP_VERSION, repo: REPO_URL, favicon, ...schemas,
     beamWidth: String(BEAM_W), beamHeight: String(BEAM_H), beamTall: (BEAM_H / BEAM_W).toFixed(5), beamBelow: String(shareBelowLineB()),
     beamOverlay: beamOverlay(projector.design, projector.analysis),
     heroCaption: `The default projector's beam, traced with ${num(RAYS / 1e6)} million rays and aimed by its cut-off: ${met} of ${e.items.length} requirements met.`,
