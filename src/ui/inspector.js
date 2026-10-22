@@ -26,10 +26,12 @@ import { hydrateIcons } from './icons.js';
  * @template T
  * @typedef {{ spec: Spec, sections: Section<T>[], visible?: Record<string, (d: T) => boolean>,
  *   unavailable?: Record<string, (d: T, tag: string) => string | null>, switchVariant?: (d: T, path: string, tag: string) => void,
- *   options?: Record<string, (d: T) => [string, string][]>, setters?: Record<string, (d: T, value: string) => void> }} InspectorConfig
+ *   options?: Record<string, (d: T) => [string, string][]>, setters?: Record<string, (d: T, value: string) => void>,
+ *   notes?: Record<string, (d: T) => Node | null> }} InspectorConfig
  *   visible: fields and groups shown only in some states. unavailable: union variants that cannot be chosen, with the
  *   reason. options: the choices of an enum field narrowed to those that apply in the current document. setters: an
- *   enum field whose change brings other fields along, such as a lamp's role choosing its markets.
+ *   enum field whose change brings other fields along, such as a lamp's role choosing its markets. notes: content of the
+ *   workspace's own shown right below a field, such as what the file says about the value chosen.
  */
 
 /** Decimal places for a number field in display units. @param {NumberSpec} spec */
@@ -148,6 +150,8 @@ export class Inspector {
       into.append(this.enumField(path, spec.label, options, String(getPath(design, path)), tag => this.commit(`Set ${spec.label.toLowerCase()}`, d => (setter ? setter(d, tag) : setPath(d, path, tag))), spec.help));
     }
     else if (spec.kind === 'string') into.append(this.textField(path, spec.label));
+    const note = this.config.notes?.[path]?.(design);
+    if (note) into.append(note);
   }
 
   /** @param {string} path @param {UnionSpec} spec @param {T} design @param {boolean} [unlabelled] the section title already names it */

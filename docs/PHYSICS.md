@@ -257,6 +257,23 @@ is judged on the part the file covers and says so, and the picture draws those d
 Points read through R149's receiver, 0.149° across, as for a trace. A file whose angles are more than 1° apart is
 flagged: a cut-off or a hot spot narrower than that cannot be judged reliably.
 
+**Traffic side.** A passing beam's cut-off lies level on the side of oncoming traffic and rises on the kerb side, so
+the file itself shows which traffic side the lamp is for: higher on the right (+H) for right-hand traffic, on the left
+for left-hand traffic. Cutline reads it on the file as it reads it (after the Angles mapping, before any aim) with the
+vertical scan the R149 laboratory uses to find a cut-off (Annex 6 §2.2): the inflection of log intensity, at 1.5°, 2.5°
+and 3.5° on each side of V-V, the offsets of R149's linearity rule. The scans reach from 5°D to 5°U, so a file not yet
+aimed still has its cut-off inside them. The rise is the mean height on the right less the mean height on the left.
+Each scan must find a gradient of at least 0.08, the least R149's horizontal aim accepts, or the file shows no side. A
+rise within ±0.2°, the scatter R149's linearity rule allows a level cut-off, is level and shows no side either; a 15°
+rise from V-V gives 0.67°. A file whose vertical angles are more than 0.5° apart cannot place a cut-off that closely
+and is not read. These thresholds are Cutline's, built from R149's values, not a requirement of any regulation.
+
+When a file is opened, the study takes the side its cut-off shows, as an edit of its own that undo takes back, unless
+the file comes with a side (the traced design). After that the engineer's choice stands; when it disagrees with the
+file, the design panel, the markets and the report say so, with the fix one click away. This matters because a market
+for the other side is checked on the file's mirror image: with the side wrong, every market is checked on the other
+side's beam. A test pins each case.
+
 **Exporting a traced design.** The lamp design workspace writes its traced beam as an LM-63-2002 Type A file, as built
 (the laboratory's aim taken back out), at 0.1° steps across the fine grid and 0.5° beyond it. The values are the
 displayed candela, averaged over enough rays to follow the beam rather than its noise.

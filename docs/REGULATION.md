@@ -83,7 +83,10 @@ inflection point there is moved to line B, 0.57° below the horizon (Annex 5 §3
 - **0.2°D line**, method (a): scan the line 0.2° below the horizon from 5°L to 5°R. The steepest fall, with G at
   least 0.08, goes onto line A at 0.5°R.
 - **Three lines**, method (b): scan vertically at 1°R, 2°R and 3°R, each with G at least 0.08. A straight line through
-  the three inflection points meets line B, and that meeting point goes onto V-V.
+  the three inflection points meets line B, and that meeting point goes onto V-V. The method assumes the cut-off rises
+  towards the kerb there. When the line rises by no more than 0.2° from 1° to 3° (the scatter the linearity rule allows
+  a level cut-off), or falls, it meets line B far away or on the wrong side, as on a beam for the other traffic side;
+  Cutline then leaves the beam where it is across and says so. This bound is Cutline's, not the regulation's.
 
 **Driving beam.** The area of maximum intensity is centred on H-V (Annex 5 §3.1.2). A driving beam that shares its
 aim with the passing beam is not modelled.

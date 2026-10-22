@@ -107,7 +107,7 @@ test('a study checks the lamp for the other traffic side on the file\'s mirror i
   const study = defaultStudy();
   study.source = { name: 'beam.ies', text: writeIesTypeA({ title: 'x', horizontal: H, vertical: V, candela: f }) };
   study.lamp.role = 'driving';
-  study.markets = [{ pack: 'r149', fn: 'driving-B', traffic: 'right' }, { pack: 'r149', fn: 'driving-B', traffic: 'left' }];
+  study.markets = [{ pack: 'r149', fn: 'driving-B', traffic: 'right', lamp: 'matching' }, { pack: 'r149', fn: 'driving-B', traffic: 'left', lamp: 'matching' }];
   const { analysis } = analyseStudy(study, null);
   const [right, left] = analysis.markets;
   assert.equal(right.beam, 'file'); assert.equal(left.beam, 'mirror');
@@ -125,13 +125,13 @@ test('an FMVSS visually aimed lower beam is aimed by the cut-off side the engine
   const f = (/** @type {number} */ h, /** @type {number} */ v) => 15000 * Math.exp(-((h / 10) ** 2)) * 10 ** (-2 / (1 + Math.exp(-(v + 1) / 0.08))) + 20;
   const study = defaultStudy();
   study.source = { name: 'low.ies', text: writeIesTypeA({ title: 'x', horizontal: range(-40, 40, 0.5), vertical: range(-20, 20, 0.1), candela: f }) };
-  study.markets = [{ pack: 'fmvss108', fn: 'lower-LB1V', traffic: 'right' }];
+  study.markets = [{ pack: 'fmvss108', fn: 'lower-LB1V', traffic: 'right', lamp: 'matching' }];
   const aimOf = (/** @type {string[]} */ conditions) => { study.conditions = conditions; return analyseStudy(study, null).analysis.markets[0].aim; };
   const vol = aimOf([]), vor = aimOf(['fmvss108:vor']);
   assert.match(vol.method, /VOL/); assert.match(vor.method, /VOR/);
   near(vor.dv - vol.dv, 0.4, 0.06, 'VOR sits 0.4° higher than VOL');
   // CMVSS 108 stands on FMVSS 108's data, so it shares the declaration.
-  study.markets = [{ pack: 'cmvss108', fn: 'lower-LB1V', traffic: 'right' }];
+  study.markets = [{ pack: 'cmvss108', fn: 'lower-LB1V', traffic: 'right', lamp: 'matching' }];
   assert.match(aimOf(['fmvss108:vor']).method, /VOR/);
 });
 

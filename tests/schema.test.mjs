@@ -17,7 +17,7 @@ test('every committed schema matches its spec (run node scripts/build-schema.mjs
 });
 
 test('the photometry schema accepts the studies the app writes and rejects what the loader rejects', () => {
-  const schema = read('cutline.photometry.v1.schema.json');
+  const schema = read('cutline.photometry.v2.schema.json');
   const signal = defaultStudy();
   setRole(signal, 'turn-front');
   signal.targets.push({ name: 'Wide', shape: 'zone', h0: -20, v0: -5, h1: 20, v1: 5, limit: 'min', min: 1, max: 0, unit: 'cd' });
@@ -38,7 +38,7 @@ test('the photometry schema accepts the studies the app writes and rejects what 
   }
   // A market the catalogue does not hold passes the schema but not the loader's rules.
   const unknown = defaultStudy();
-  unknown.markets.push({ pack: 'nowhere', fn: 'x', traffic: 'right' });
+  unknown.markets.push({ pack: 'nowhere', fn: 'x', traffic: 'right', lamp: 'matching' });
   assert.throws(() => parseStudy(JSON.stringify(unknown)), /no regulation/);
 });
 

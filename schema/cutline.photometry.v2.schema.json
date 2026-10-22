@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:cutline:schema:photometry:v1",
+  "$id": "urn:cutline:schema:photometry:v2",
   "title": "Cutline photometry study",
   "type": "object",
   "description": "A light distribution file and what the engineer decided about it: how its angles map, what the lamp is, the markets to check, the engineer's targets, the road and the pictures. Angles are degrees, the road is metres. Cross-field rules are listed in docs/SCHEMA.md and checked by the loader.",
@@ -25,7 +25,7 @@
       "const": "cutline.photometry"
     },
     "version": {
-      "const": 1
+      "const": 2
     },
     "id": {
       "type": "string",
@@ -113,7 +113,6 @@
       "required": [
         "role",
         "traffic",
-        "otherTraffic",
         "outward",
         "aim",
         "shiftH",
@@ -147,14 +146,7 @@
             "right",
             "left"
           ],
-          "description": "Made for. The traffic side this headlamp is designed for"
-        },
-        "otherTraffic": {
-          "enum": [
-            "mirror",
-            "as-is"
-          ],
-          "description": "For the other traffic side. A headlamp for the other traffic side is usually the mirror image of this one. Check it as it is for a lamp that serves both sides"
+          "description": "Made for. The traffic side the file is a lamp for. The lamp for the other side is its mirror image"
         },
         "outward": {
           "enum": [
@@ -216,7 +208,8 @@
         "required": [
           "pack",
           "fn",
-          "traffic"
+          "traffic",
+          "lamp"
         ],
         "properties": {
           "pack": {
@@ -235,7 +228,14 @@
               "right",
               "left"
             ],
-            "description": "Traffic"
+            "description": "Test points. The traffic side the regulation's test points are drawn for"
+          },
+          "lamp": {
+            "enum": [
+              "matching",
+              "other"
+            ],
+            "description": "Lamp. Which lamp a headlamp market checks: the file, or its mirror image, whichever is the lamp for that side"
           }
         }
       },

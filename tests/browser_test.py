@@ -208,7 +208,7 @@ with sync_playwright() as p:
     markets = page.evaluate('() => window.cutline.photometry.analysis.markets.map(m => ({ key: m.key, pass: m.pass, short: m.pack.short }))')
     by_key = {m['key']: m for m in markets}
     check('the traced design is checked against every market for a passing beam', len(markets) >= 6 and {'r149', 'r123', 'fmvss108', 'cmvss108'} <= {m['key'].split(':')[0] for m in markets}, [m['key'] for m in markets])
-    check('the design that meets R149 in its own workspace meets it here too, for both traffic sides', by_key.get('r149:passing-C:right', {}).get('pass') and by_key.get('r149:passing-C:left', {}).get('pass'), markets)
+    check('the design that meets R149 in its own workspace meets it here too, for both traffic sides', by_key.get('r149:passing-C:right:matching', {}).get('pass') and by_key.get('r149:passing-C:left:matching', {}).get('pass'), markets)
     check('the matrix lists every market', page.locator('.market-row').count() == len(markets))
     page.screenshot(path=str(OUT / 'photometry-markets.png'))
     page.locator('.market-row').nth(2).click()
@@ -261,6 +261,57 @@ with sync_playwright() as p:
     html = Path(report.value.path()).read_text()
     check('the market report lists every market, the targets and the markets not checked', all(m['short'] in html for m in markets) and 'Your targets' in html and 'Markets not checked' in html, report.value.suggested_filename)
 
+    # A passing beam for left-hand traffic: its cut-off rises on the left. Opening it sets the side it is made for;
+    # choosing the other side afterwards is flagged, with the fix one click away.
+    def low_beam(h, v):
+        cut = -0.57 + min(1.5, max(0.0, -h) * math.tan(math.radians(15)))
+        return 15000 * math.exp(-((h / 12) ** 2)) * 10 ** (-2 / (1 + math.exp(-(v - cut) / 0.08))) + 20
+    hs = [x / 2 for x in range(-80, 81)]
+    vs = [x / 10 for x in range(-200, 201)]
+    lht = OUT / 'low-lht.ies'
+    lht.write_text(f'IESNA:LM-63-2002\n[TEST] low beam LHT\nTILT=NONE\n1 -1 1 {len(vs)} {len(hs)} 3 2 0 0 0\n1 1 0\n{" ".join(map(str, vs))}\n{" ".join(map(str, hs))}\n'
+                   + '\n'.join(' '.join(f'{low_beam(h, v):.1f}' for v in vs) for h in hs) + '\n')
+    page.click('.study[data-study="markets"]')
+    page.set_input_files('#fileInput', str(lht))
+    page.wait_for_function('window.cutline.photometry.store.doc.lamp.traffic === "left"', timeout=SLOW)
+    check('opening a left-hand traffic passing beam sets it as made for left-hand traffic', page.locator('.toast', has_text='left-hand traffic').count() == 1)
+    wait_study(page)
+    check('a side that agrees with the file gets a quiet note and no warning', page.locator('#inspectorBody .traffic-note[data-kind="match"]').count() == 1 and page.locator('#dock .traffic-note').count() == 0)
+    page.evaluate('() => window.cutline.commands.run("ph-traffic-right")')
+    wait_study(page)
+    check('a side the file disagrees with is flagged in the design panel and the markets', page.locator('#inspectorBody .traffic-note[data-kind="mismatch"]').count() == 1 and page.locator('#dock .traffic-note[data-kind="mismatch"]').count() == 1)
+    page.screenshot(path=str(OUT / 'photometry-traffic-mismatch.png'))
+    page.click('#dock .traffic-note [data-cmd="ph-traffic-left"]')
+    wait_study(page)
+    check('the fix sets the side the file shows', page.evaluate('() => window.cutline.photometry.store.doc.lamp.traffic') == 'left' and page.locator('#dock .traffic-note').count() == 0)
+    page.screenshot(path=str(OUT / 'photometry-traffic-match.png'))
+
+    # Each market checks a lamp: the picture names the pair, and the matrix switches it.
+    crumb = page.locator('.breadcrumb .crumb-pair')
+    check('the picture names the lamp and the test points it shows', crumb.locator('.crumb-long').text_content() == 'Right-hand lamp on right-hand test points', crumb.text_content())
+    first = page.locator('.market-row').first
+    first.locator('.lamp-switch button', has_text='LH').click()
+    wait_study(page)
+    lamp = page.evaluate('() => window.cutline.photometry.store.doc.markets[0].lamp')
+    check('the lamp switch checks the left-hand lamp on right-hand points, marked as crossed', lamp == 'other' and 'crossed' in (crumb.get_attribute('class') or '') and crumb.locator('.crumb-long').text_content() == 'Left-hand lamp on right-hand test points' and page.locator('.market-row').first.locator('.lamp-crossed').count() == 1, [lamp, crumb.text_content()])
+    shown = page.evaluate('''() => [...document.querySelectorAll('.market-row')].map(r => r.querySelector('.lamp-switch [aria-pressed="true"]')?.textContent)''')
+    want = page.evaluate('''() => window.cutline.photometry.store.doc.markets.map(m => ((m.lamp === 'other') !== (m.traffic === 'right')) ? 'RH' : 'LH')''')
+    check('every row of the matrix shows the lamp its own market checks', shown == want, [shown, want])
+    page.screenshot(path=str(OUT / 'photometry-lamp-crossed.png'))
+    page.evaluate('() => window.cutline.commands.run("undo")')
+    wait_study(page)
+    check('undo puts the lamp back', page.evaluate('() => window.cutline.photometry.store.doc.markets[0].lamp') == 'matching')
+    page.evaluate('() => { window.cutline.commands.run("ph-add-market"); }')
+    page.wait_for_selector('#dialog select[aria-label="Lamp"]', timeout=5000)
+    page.select_option('#dialog select[aria-label="Regulation"]', 'r123')
+    page.select_option('#dialog select[aria-label="Test points"]', 'right')
+    following = page.locator('#dialog select[aria-label="Lamp"]').input_value()
+    page.select_option('#dialog select[aria-label="Lamp"]', 'left')
+    preview = page.locator('#dialog .market-preview').text_content()
+    check('the dialog says which lamp it will check on which test points', following == 'right' and preview.startswith("Checks your left-hand lamp (the file as it is) on UN R123's right-hand traffic test points."), [following, preview])
+    page.screenshot(path=str(OUT / 'photometry-add-market.png'))
+    page.keyboard.press('Escape')
+
     # A real file replaces the traced beam and keeps the markets and targets.
     ies = OUT / 'signal.ies'
     vertical = ' '.join(str(v) for v in range(0, 181, 5))
@@ -273,7 +324,7 @@ with sync_playwright() as p:
     wait_study(page)
     opened = page.evaluate('() => [window.cutline.photometry.store.doc.source.name, window.cutline.photometry.analysis.file.type]')
     check('opening an IES file checks it in place of the traced beam', opened == ['signal.ies', 'C'], opened)
-    page.evaluate('() => window.cutline.photometry.edit("Use it as a front direction indicator", s => { s.lamp.role = "turn-front"; s.markets = [{ pack: "r148", fn: "direction-indicator-1", traffic: "right" }]; })')
+    page.evaluate('() => window.cutline.photometry.edit("Use it as a front direction indicator", s => { s.lamp.role = "turn-front"; s.markets = [{ pack: "r148", fn: "direction-indicator-1", traffic: "right", lamp: "matching" }]; })')
     wait_study(page)
     page.click('.study[data-study="markets"]')
     page.screenshot(path=str(OUT / 'photometry-signal.png'))

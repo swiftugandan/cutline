@@ -11,7 +11,7 @@ import { MAX_FILE_BYTES } from './distribution/distribution.js';
 /** @import { Role, Market } from './regulation/catalog.js' */
 
 export const STUDY_FORMAT = 'cutline.photometry';
-export const STUDY_VERSION = 1;
+export const STUDY_VERSION = 2;
 
 /**
  * @typedef {{ name: string, shape: 'point' | 'line' | 'zone', h0: number, v0: number, h1: number, v1: number,
@@ -25,7 +25,7 @@ export const STUDY_VERSION = 1;
  *   format: typeof STUDY_FORMAT, version: typeof STUDY_VERSION, id: string, title: string, notes: string,
  *   source: { name: string, text: string },
  *   mapping: { system: 'file' | 'A' | 'B' | 'C', axisC: number, cTurn: 'left' | 'right', mirror: 'no' | 'yes' },
- *   lamp: { role: Role, traffic: 'right' | 'left', otherTraffic: 'mirror' | 'as-is', outward: 'right' | 'left',
+ *   lamp: { role: Role, traffic: 'right' | 'left', outward: 'right' | 'left',
  *     aim: 'laboratory' | 'measured', shiftH: number, shiftV: number, aimMethod: 'threeLine' | 'line02D', sourceFlux: number },
  *   conditions: string[],
  *   markets: Market[],
@@ -58,8 +58,7 @@ export const STUDY_SPEC = object('Cutline photometry study', {
   }),
   lamp: object('Lamp', {
     role: choice('Function', /** @type {Record<string, string>} */ (ROLES), 'What the lamp is. It decides which requirements of each market apply'),
-    traffic: choice('Made for', { right: 'Right-hand traffic', left: 'Left-hand traffic' }, 'The traffic side this headlamp is designed for'),
-    otherTraffic: choice('For the other traffic side', { mirror: 'Check its mirror image', 'as-is': 'Check it as it is' }, 'A headlamp for the other traffic side is usually the mirror image of this one. Check it as it is for a lamp that serves both sides'),
+    traffic: choice('Made for', { right: 'Right-hand traffic', left: 'Left-hand traffic' }, 'The traffic side the file is a lamp for. The lamp for the other side is its mirror image'),
     outward: choice('Outward is', { right: 'To the right (+H)', left: 'To the left (−H)' }, 'Which side of the file faces away from the vehicle\'s centre line. Signal lamp requirements are written with H positive outwards'),
     aim: choice('Aim', { laboratory: 'As the laboratory aims it', measured: 'As measured' }, 'As the laboratory aims it: each market aims the beam by its own method, such as by the cut-off. As measured: the file\'s own axis, moved by the shifts below'),
     shiftH: number('Move right', '°', -10, 10, { ...DEG, help: 'Moves the beam to the right (negative: left) when it is checked as measured' }),
@@ -71,7 +70,8 @@ export const STUDY_SPEC = object('Cutline photometry study', {
   markets: list('Markets', object('Market', {
     pack: string('Regulation', 32, { pattern: /^[a-z0-9-]+$/ }),
     fn: string('Function', 64),
-    traffic: choice('Traffic', { right: 'Right-hand', left: 'Left-hand' }),
+    traffic: choice('Test points', { right: 'Right-hand traffic', left: 'Left-hand traffic' }, 'The traffic side the regulation\'s test points are drawn for'),
+    lamp: choice('Lamp', { matching: 'The lamp for these test points', other: 'The lamp for the other side' }, 'Which lamp a headlamp market checks: the file, or its mirror image, whichever is the lamp for that side'),
   }), 60),
   targets: list('Targets', object('Target', {
     name: string('Name', 80),
@@ -124,6 +124,7 @@ export function studyRuleViolations(s) {
     if (!pack) { out.push(new ValidationError(`markets[${i}].pack`, `names no regulation Cutline holds (${m.pack})`)); return; }
     if (!functionById(m.pack, m.fn)) out.push(new ValidationError(`markets[${i}].fn`, `names no function of ${pack.short} (${m.fn})`));
     if (!pack.traffics.includes(m.traffic)) out.push(new ValidationError(`markets[${i}].traffic`, `${pack.short} has no ${m.traffic}-hand traffic version`));
+    if (m.lamp === 'other' && functionById(m.pack, m.fn)?.sideMeans === 'system') out.push(new ValidationError(`markets[${i}].lamp`, 'checks the lamp of its own system, so it cannot be checked on the other lamp'));
   });
   s.targets.forEach((t, i) => {
     if (t.limit === 'range' && t.min > t.max) out.push(new ValidationError(`targets[${i}].max`, 'must be at least the minimum'));
@@ -150,8 +151,26 @@ export function parseStudy(text) {
   let raw;
   try { raw = JSON.parse(text); } catch { throw new ValidationError('', 'This file is not valid JSON.'); }
   if (!raw || typeof raw !== 'object' || /** @type {{format?: unknown}} */ (raw).format !== STUDY_FORMAT) throw new ValidationError('', 'This is not a Cutline photometry study.');
-  if (/** @type {{version?: unknown}} */ (raw).version !== STUDY_VERSION) throw new ValidationError('version', `This study uses format version ${String(/** @type {{version?: unknown}} */ (raw).version)}; this app reads version ${STUDY_VERSION}.`);
+  const version = /** @type {{version?: unknown}} */ (raw).version;
+  if (version === 1) migrateFrom1(/** @type {Record<string, any>} */ (raw));
+  else if (version !== STUDY_VERSION) throw new ValidationError('version', `This study uses format version ${String(version)}; this app reads versions 1 to ${STUDY_VERSION}.`);
   return validateStudy(raw);
+}
+
+/**
+ * Version 1 chose, for the whole study, whether a market for the other traffic side checked the file's mirror image
+ * (lamp.otherTraffic 'mirror') or the file as it is ('as-is'). Version 2 makes it each market's choice, by side: the
+ * same study checks the same beams.
+ * @param {Record<string, any>} raw
+ */
+function migrateFrom1(raw) {
+  const lamp = raw.lamp && typeof raw.lamp === 'object' ? raw.lamp : {};
+  const asIs = lamp.otherTraffic === 'as-is';
+  if (Array.isArray(raw.markets)) {
+    for (const m of raw.markets) if (m && typeof m === 'object') m.lamp = asIs && m.traffic !== lamp.traffic ? 'other' : 'matching';
+  }
+  delete lamp.otherTraffic;
+  raw.version = 2;
 }
 
 /** @param {Study} study */
@@ -174,7 +193,7 @@ export function defaultStudy() {
     format: STUDY_FORMAT, version: STUDY_VERSION, id: newStudyId(), title: 'Untitled study', notes: '',
     source: { name: '', text: '' },
     mapping: { system: 'file', axisC: 0, cTurn: 'left', mirror: 'no' },
-    lamp: { role: 'passing', traffic: 'right', otherTraffic: 'mirror', outward: 'right', aim: 'laboratory', shiftH: 0, shiftV: 0, aimMethod: 'threeLine', sourceFlux: 0 },
+    lamp: { role: 'passing', traffic: 'right', outward: 'right', aim: 'laboratory', shiftH: 0, shiftV: 0, aimMethod: 'threeLine', sourceFlux: 0 },
     conditions: [],
     markets: defaultMarkets('passing'),
     targets: [],
