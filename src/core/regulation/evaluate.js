@@ -322,9 +322,12 @@ export function aimR149(beam, design) {
     const scans = Number.isFinite(rough) ? H.threeLineH.map(h => ({ h: s * h, ...verticalScan(beam, s * h, -2, 2, 0.4, rough) })) : first;
     if (scans.every(x => x.g >= H.minG && Number.isFinite(x.inflection))) {
       const { mh, mv, slope } = fitLine(scans);
-      // Where the fitted line meets line B goes onto V-V.
-      if (Math.abs(slope) > 1e-6) beam.dh = -(mh + (RULES.lineB - mv) / slope);
-      else aim.notes.push('The three inflection points lie level, so the line through them never meets line B; the beam was not aimed sideways.');
+      // Where the fitted line meets line B goes onto V-V. The method needs the cut-off to rise towards the kerb across
+      // the three lines by more than the scatter the linearity rule allows a level cut-off: a flatter line meets line B
+      // anywhere, and one that falls meets it on the wrong side. That is what a beam for the other traffic side shows.
+      const span = H.threeLineH[H.threeLineH.length - 1] - H.threeLineH[0];
+      if (s * slope * span > RULES.linearity.maxSpread) beam.dh = -(mh + (RULES.lineB - mv) / slope);
+      else aim.notes.push(`The cut-off does not rise across the scans at 1°, 2° and 3°${s > 0 ? 'R' : 'L'} (a beam for the other traffic side does not), so the line through them meets line B nowhere near V-V; the beam was not aimed sideways.`);
     } else aim.notes.push(`A scan at 1°, 2° or 3°${s > 0 ? 'R' : 'L'} found no gradient of ${H.minG}; the beam was not aimed sideways.`);
     aim.method = 'three lines (Annex 6 §2.3.2.1 b)';
   } else {

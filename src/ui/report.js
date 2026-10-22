@@ -4,6 +4,8 @@
 
 import { ROLES, isHeadlampRole } from '../core/regulation/catalog.js';
 import { APP_VERSION } from '../core/model.js';
+import { trafficVerdict } from './traffic-note.js';
+import { lampOf, pairPhrase, pairSentence, sideWord } from './market-lamp.js';
 
 /** @import { Study } from '../core/study.js' */
 /** @import { StudyAnalysis, MarketResult } from '../core/study-analysis.js' */
@@ -52,15 +54,16 @@ export function studyReport(study, a, { images, dips, notChecked, generated }) {
   const scope = headlamp ? 'headlamp' : 'signal';
   const passing = a.markets.filter(m => m.pass).length;
   const f = a.file;
+  const traffic = trafficVerdict(study, a.traffic);
   const marketName = (/** @type {MarketResult} */ r) => `${r.pack.short}${headlamp ? `, ${r.market.traffic}-hand traffic` : ''}`;
   const summary = a.markets.map(r => {
     const c = counts(r);
-    return `<tr class="${r.pass ? 'pass' : 'fail'}"><td class="status">${r.pass ? 'Meets' : 'Fails'}</td><td>${esc(marketName(r))}<small>${esc(r.pack.region)}</small></td><td>${esc(r.fn.name)}</td><td class="num">${c.pass + c.near} of ${r.items.length - c.info}</td><td>${r.worst ? `${esc(r.worst.label)} (${margin(r.worst.margin)})` : '–'}</td><td>${esc(r.pack.provenance === 'official' ? 'Official text' : r.pack.provenance === 'adopted' ? 'Adopted' : 'Incomplete')}</td></tr>`;
+    return `<tr class="${r.pass ? 'pass' : 'fail'}"><td class="status">${r.pass ? 'Meets' : 'Fails'}</td><td>${esc(marketName(r))}<small>${esc(r.pack.region)}</small>${headlamp ? `<small>${esc(pairPhrase(study, r.market) ?? '')}</small>` : ''}</td><td>${esc(r.fn.name)}</td><td class="num">${c.pass + c.near} of ${r.items.length - c.info}</td><td>${r.worst ? `${esc(r.worst.label)} (${margin(r.worst.margin)})` : '–'}</td><td>${esc(r.pack.provenance === 'official' ? 'Official text' : r.pack.provenance === 'adopted' ? 'Adopted' : 'Incomplete')}</td></tr>`;
   }).join('');
   const markets = a.markets.map(r => `
     <section class="market">
       <h3>${esc(marketName(r))}: ${esc(r.fn.name)} <span class="verdict ${r.pass ? 'pass' : 'fail'}">${r.pass ? 'Meets' : 'Does not meet'}</span></h3>
-      <p class="meta">${esc(r.pack.title)}. ${esc(r.pack.statement)}<br>Source: ${esc(r.pack.source.document)}<br>Aim: ${esc(r.aim.method)}${r.aim.method !== 'as measured' ? ` (moved ${num(r.aim.dh, 2)}° across, ${num(r.aim.dv, 2)}° up)` : ''}${r.beam === 'mirror' ? '. Checked on the mirror image of the file: the lamp for this traffic side.' : ''}</p>
+      <p class="meta">${esc(r.pack.title)}. ${esc(r.pack.statement)}<br>Source: ${esc(r.pack.source.document)}<br>Aim: ${esc(r.aim.method)}${r.aim.method !== 'as measured' ? ` (moved ${num(r.aim.dh, 2)}° across, ${num(r.aim.dv, 2)}° up)` : ''}${headlamp ? `<br>Lamp: ${esc(pairSentence(study, r.market, r.pack.short) ?? '')}` : ''}</p>
       ${r.aim.notes.map(n => `<p class="note">${esc(n)}</p>`).join('')}
       <table><thead><tr><th>Result</th><th>Requirement</th><th class="num">Measured</th><th>Limit</th><th class="num">Margin</th></tr></thead><tbody>${itemRows(r.items)}</tbody></table>
       ${r.pack.notes.length ? `<details><summary>Notes on this regulation</summary><ul>${r.pack.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></details>` : ''}
@@ -104,6 +107,7 @@ export function studyReport(study, a, { images, dips, notChecked, generated }) {
 </style></head><body>
 <h1>${esc(study.title)}</h1>
 <p class="meta">${esc(ROLES[study.lamp.role])}${headlamp ? `, made for ${study.lamp.traffic}-hand traffic` : `, outward to ${study.lamp.outward === 'right' ? '+H' : '−H'}`}. ${study.lamp.aim === 'laboratory' ? 'Each market aims the beam by its own laboratory method.' : `Checked as measured${study.lamp.shiftH || study.lamp.shiftV ? `, moved ${num(study.lamp.shiftH, 2)}° across and ${num(study.lamp.shiftV, 2)}° up` : ''}.`}</p>
+${traffic?.kind === 'mismatch' ? `<p class="note">${esc(traffic.text)}</p>` : ''}
 <div class="banner ${passing === a.markets.length ? 'pass' : 'fail'}">${passing === a.markets.length ? (passing === 1 ? 'Meets the market checked' : `Meets all ${passing} markets checked`) : `Meets ${passing} of ${a.markets.length} markets checked`}</div>
 <div class="facts">
   <div><span>File</span>${esc(study.source.name)}</div>
@@ -136,9 +140,11 @@ export function studyCsv(study, a) {
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
   const lines = [
     `${q('Study')},${q(study.title)}`, `${q('File')},${q(study.source.name)}`, `${q('Function')},${q(ROLES[study.lamp.role])}`, '',
-    ['Market', 'Traffic', 'Function', 'Source', 'Requirement', 'Group', 'Status', 'Measured', 'Unit', 'Limit', 'Margin', 'Citation'].map(q).join(','),
+    ['Market', 'Test points', 'Lamp', 'Function', 'Source', 'Requirement', 'Group', 'Status', 'Measured', 'Unit', 'Limit', 'Margin', 'Citation'].map(q).join(','),
   ];
-  for (const r of a.markets) for (const i of r.items) lines.push([r.pack.short, r.market.traffic, r.fn.name, r.pack.provenance, i.label, i.group, i.status, Number.isFinite(i.value) ? i.value.toPrecision(5) : '', i.unit, i.requirement, Number.isFinite(i.margin) ? i.margin.toFixed(4) : '', i.cite].map(q).join(','));
-  for (const i of a.targets) lines.push(['Your targets', '', '', '', i.label, i.group, i.status, Number.isFinite(i.value) ? i.value.toPrecision(5) : '', i.unit, i.requirement, Number.isFinite(i.margin) ? i.margin.toFixed(4) : '', ''].map(q).join(','));
+  /** @param {MarketResult} r */
+  const lampText = r => { const l = lampOf(study, r.market); return l ? `${sideWord(l.side)}${l.mirrored ? ' (file mirrored)' : ''}` : ''; };
+  for (const r of a.markets) for (const i of r.items) lines.push([r.pack.short, r.market.traffic, lampText(r), r.fn.name, r.pack.provenance, i.label, i.group, i.status, Number.isFinite(i.value) ? i.value.toPrecision(5) : '', i.unit, i.requirement, Number.isFinite(i.margin) ? i.margin.toFixed(4) : '', i.cite].map(q).join(','));
+  for (const i of a.targets) lines.push(['Your targets', '', '', '', '', i.label, i.group, i.status, Number.isFinite(i.value) ? i.value.toPrecision(5) : '', i.unit, i.requirement, Number.isFinite(i.margin) ? i.margin.toFixed(4) : '', ''].map(q).join(','));
   return lines.join('\n') + '\n';
 }

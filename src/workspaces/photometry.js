@@ -4,7 +4,7 @@
 
 import { DocumentStore } from '../core/history.js';
 import { STUDY_SPEC, defaultStudy, validateStudy, parseStudy, serializeStudy, setRole } from '../core/study.js';
-import { ROLES, isHeadlampRole, packById, NOT_CHECKED } from '../core/regulation/catalog.js';
+import { ROLES, isHeadlampRole, packById, NOT_CHECKED, lampSideOf } from '../core/regulation/catalog.js';
 import { localRatio, findDips } from '../core/uniformity.js';
 import { photometricTypeOf, MAX_FILE_BYTES, tooLarge } from '../core/distribution/distribution.js';
 import { gridSize } from '../core/tracer.js';
@@ -22,6 +22,8 @@ import { beamPosition, roadPosition, beamMeasure, roadMeasure, revealRow } from 
 import { renderStudyList } from './design.js';
 import { byId, h, fmt, debounce, downloadBlob, fileName } from '../ui/dom.js';
 import { hydrateIcons } from '../ui/icons.js';
+import { trafficNote } from '../ui/traffic-note.js';
+import { lampOf, lampChoice, pairPhrase, pairSentence, sideWord, sideShort } from '../ui/market-lamp.js';
 
 /** @import { Study, Target } from '../core/study.js' */
 /** @import { StudyAnalysis, MarketResult } from '../core/study-analysis.js' */
@@ -29,7 +31,7 @@ import { hydrateIcons } from '../ui/icons.js';
 /** @import { RibbonTab, Command, MenuEntry } from '../ui/shell.js' */
 /** @import { MeasureAdapter } from '../ui/measure.js' */
 /** @import { InspectorConfig } from '../ui/inspector.js' */
-/** @import { Role } from '../core/regulation/catalog.js' */
+/** @import { Role, Market } from '../core/regulation/catalog.js' */
 /** @import { Dip } from '../core/uniformity.js' */
 /** @import { BeamDisplay, BeamLayer } from '../render/beam-view.js' */
 /** @import { RoadDisplay } from '../render/road-view.js' */
@@ -43,6 +45,9 @@ const headlamp = (/** @type {Study} */ s) => isHeadlampRole(s.lamp.role);
 /** Whether a study reads its file as Type C, where the lamp's axis plane matters. @param {Study} s */
 const readsAsTypeC = s => s.mapping.system === 'C' || (s.mapping.system === 'file' && photometricTypeOf(s.source.text, s.source.name) === 'C');
 
+/** Which file a study holds, to tell a newly opened one from the one an analysis was run on. @param {Study} s */
+const sourceKey = s => `${s.source.name}|${s.source.text.length}|${s.source.text.slice(0, 400)}`;
+
 /** The design panel for a study. @type {InspectorConfig<Study>} */
 const INSPECTOR = {
   spec: STUDY_SPEC,
@@ -55,7 +60,6 @@ const INSPECTOR = {
   ],
   visible: {
     'lamp.traffic': headlamp,
-    'lamp.otherTraffic': headlamp,
     'lamp.outward': s => !headlamp(s),
     'lamp.aim': headlamp,
     'lamp.shiftH': s => s.lamp.aim === 'measured',
@@ -112,6 +116,8 @@ export class PhotometryWorkspace {
     this.selected = null;
     /** Adding a target by clicking the beam. */
     this.picking = false;
+    /** A file just opened whose cut-off is to set the side the lamp is made for, once it is read. @type {string | null} */
+    this.adoptTraffic = null;
     /** The test point the context menu was opened on. @type {string | null} */
     this.menuTarget = null;
     /** @type {Dip[]} */
@@ -128,6 +134,7 @@ export class PhotometryWorkspace {
     this.requested = '';
     this.inspector = new Inspector(byId('inspectorBody'), { store: this.store, config: INSPECTOR, onError: message => app.toasts.show(message, { kind: 'error' }) });
     this.inspector.config.sections[1].extra = s => [this.fileBlock(s)];
+    this.inspector.config.notes = { 'lamp.traffic': s => this.madeForNotes(s) };
     this.autosave = debounce(() => this.save(), 600);
     this.reanalyse = debounce(() => this.analyse(), 120);
     /** @type {Interaction} */
@@ -233,6 +240,23 @@ export class PhotometryWorkspace {
     this.showAnalysis();
     this.renderPanels();
     if (this.isActive) this.app.renderChrome();
+    if (this.analysis && this.analysed === fingerprint) this.adoptTrafficSide(study);
+  }
+
+  /**
+   * Once a newly opened passing beam is read, the study takes the traffic side its cut-off shows, as an edit of its
+   * own that undo takes back. Only then: a side the engineer chooses afterwards stands, with a note when the file
+   * disagrees.
+   * @param {Study} analysed the study the analysis on screen was run on
+   */
+  adoptTrafficSide(analysed) {
+    if (!this.adoptTraffic || this.adoptTraffic !== sourceKey(analysed)) return;
+    this.adoptTraffic = null;
+    const side = this.analysis?.traffic?.side;
+    // The engineer may have chosen a side, or opened another file, while this one was read.
+    if (!side || side === this.doc.lamp.traffic || this.doc.lamp.traffic !== analysed.lamp.traffic || sourceKey(this.doc) !== sourceKey(analysed)) return;
+    this.edit('Take the traffic side from the file', d => { d.lamp.traffic = side; });
+    this.app.toasts.show(`Made for set to ${side}-hand traffic: the file's cut-off sits higher on the ${side}.`, { ms: 9000, action: { label: 'Undo', run: () => this.app.commands.run('undo') } });
   }
 
   /** The market the beam view shows. */
@@ -366,6 +390,7 @@ export class PhotometryWorkspace {
           if (on) d.conditions.push(key);
         }),
         onReport: () => this.exportReport(),
+        onLamp: (market, side) => this.setMarketLamp(market, side),
       });
     }
     dock.replaceChildren(view);
@@ -422,10 +447,56 @@ export class PhotometryWorkspace {
 
   breadcrumb() {
     const s = this.doc, m = this.market;
+    // With a market shown, the lamp and test points it pairs come straight after the file and never shrink: they say
+    // what the picture is. The market's name gives way first; the role is in the design panel.
+    if (!m || this.study === 'targets') return [h('strong', { text: s.source.name || 'No file' }), h('span', { class: 'sep', text: '/' }), ROLES[s.lamp.role]];
     return [
-      h('strong', { text: s.source.name || 'No file' }), h('span', { class: 'sep', text: '/' }), ROLES[s.lamp.role],
-      ...(m && this.study !== 'targets' ? [h('span', { class: 'sep', text: '/' }), `${marketName(m, headlamp(s))}, ${m.fn.name}`] : []),
+      h('strong', { text: s.source.name || 'No file' }), h('span', { class: 'sep', text: '/' }),
+      ...(headlamp(s) ? [this.pairCrumb(m), h('span', { class: 'sep', text: '/' })] : []),
+      h('span', { class: 'crumb-market', text: `${marketName(m, headlamp(s))}, ${m.fn.name}` }),
     ];
+  }
+
+  /** The lamp and the test points the picture shows, marked when the lamp is for the other side. @param {MarketResult} m */
+  pairCrumb(m) {
+    const s = this.doc, l = lampOf(s, m.market);
+    // A phone has room only for the short form, in the matrix's own terms.
+    const short = l ? (l.system ? `${sideShort(l.side)} lamp in ${m.market.traffic === 'right' ? 'LHT' : 'RHT'}` : `${sideShort(l.side)} lamp · ${m.market.traffic === 'right' ? 'RHT' : 'LHT'}`) : '';
+    return h('span', { class: l?.crossed ? 'crumb-pair crossed' : 'crumb-pair', 'data-tip': pairSentence(s, m.market, m.pack.short) ?? undefined }, [
+      h('span', { class: 'crumb-long', text: pairPhrase(s, m.market) ?? '' }), h('span', { class: 'crumb-short', text: short }),
+    ]);
+  }
+
+  /**
+   * Under Made for: what the file's cut-off says about its side, and which markets check the file's mirror image, so
+   * the design panel and the matrix tell the same story.
+   * @param {Study} s
+   */
+  madeForNotes(s) {
+    const out = document.createDocumentFragment();
+    const note = trafficNote(s, this.analysis?.traffic);
+    if (note) out.append(note);
+    const mirrored = s.markets.filter(m => lampOf(s, m)?.mirrored);
+    const other = /** @type {'right' | 'left'} */ (s.lamp.traffic === 'right' ? 'left' : 'right');
+    if (headlamp(s) && s.markets.length) out.append(h('p', { class: 'field-hint', text: mirrored.length ? `${mirrored.length} of ${s.markets.length} ${s.markets.length === 1 ? 'market checks' : 'markets check'} the ${sideWord(other)} lamp, your file mirrored.` : `Every market checks your file as it is, the ${sideWord(s.lamp.traffic)} lamp.` }));
+    return out.childNodes.length ? out : null;
+  }
+
+  /**
+   * Checks a market on the left-hand or the right-hand lamp, and picks it, so the picture shows the pair just chosen.
+   * A market that already checks that lamp is not listed twice.
+   * @param {Market} m @param {'right' | 'left'} side
+   */
+  setMarketLamp(m, side) {
+    if (lampSideOf(m) === side) { this.picked = `${m.pack}:${m.fn}:${m.traffic}:${m.lamp}`; this.showAnalysis(); this.renderDock(); this.app.renderChrome(); return; }
+    const lamp = lampChoice(side, m.traffic);
+    const s = this.doc;
+    const i = s.markets.findIndex(x => x.pack === m.pack && x.fn === m.fn && x.traffic === m.traffic && x.lamp === m.lamp);
+    if (i < 0) return;
+    if (s.markets.some(x => x.pack === m.pack && x.fn === m.fn && x.traffic === m.traffic && x.lamp === lamp)) { this.app.toasts.show(`That market already checks the ${sideWord(side)} lamp.`); return; }
+    const pack = packById(m.pack);
+    this.picked = `${m.pack}:${m.fn}:${m.traffic}:${lamp}`;
+    this.edit(`Check ${pack?.short ?? m.pack}, ${m.traffic === 'right' ? 'RHT' : 'LHT'} on the ${sideWord(side)} lamp`, d => { d.markets[i].lamp = lamp; });
   }
 
   /** @returns {Legend} */
@@ -437,7 +508,8 @@ export class PhotometryWorkspace {
     if (this.beamView.hasNoData) entries.push(['Outside the file', 'rgb(44, 47, 56)']);
     if (this.study !== 'uniformity') entries.push(['Pass', '#51cf66'], ['Near', '#f2c230'], ['Fail', '#ff6b6b']);
     const m = this.market;
-    return { entries, hint: this.picking ? 'Click the beam to add a target there.' : m && this.study !== 'targets' ? `${m.aim.method === 'as measured' ? 'As measured' : `Aimed by ${m.aim.method}`}. Scroll to zoom, drag to pan.` : 'Scroll to zoom, drag to pan.' };
+    const pair = m && headlamp(s) ? `${pairPhrase(s, m.market)}. ` : '';
+    return { entries, hint: this.picking ? 'Click the beam to add a target there.' : m && this.study !== 'targets' ? `${pair}${m.aim.method === 'as measured' ? 'As measured' : `Aimed by ${m.aim.method}`}. Scroll to zoom, drag to pan.` : 'Scroll to zoom, drag to pan.' };
   }
 
   // ---------- Views ----------
@@ -515,7 +587,7 @@ export class PhotometryWorkspace {
     const choice = await this.app.dialogs.open({ title: 'Add a market', body: [h('p', { text: `The regulations that cover a ${ROLES[this.doc.lamp.role].toLowerCase()}.` }), form.body, ...(NOT_CHECKED.length ? [h('p', { class: 'dialog-note', text: `Not available: ${NOT_CHECKED.filter(n => n.scope === (headlamp(this.doc) ? 'headlamp' : 'signal')).map(n => `${n.jurisdiction} ${n.document}`).join(', ')}. The File study and the report say why.` })] : [])], actions: [{ label: 'Cancel', value: '' }, { label: 'Add', value: 'add', primary: true }] });
     const m = form.value();
     if (choice !== 'add' || !m) return;
-    if (this.doc.markets.some(x => x.pack === m.pack && x.fn === m.fn && x.traffic === m.traffic)) { this.app.toasts.show('That market is already in the list.'); return; }
+    if (this.doc.markets.some(x => x.pack === m.pack && x.fn === m.fn && x.traffic === m.traffic && x.lamp === m.lamp)) { this.app.toasts.show('That market is already in the list.'); return; }
     this.edit('Add a market', d => { d.markets.push(m); });
   }
 
@@ -591,6 +663,8 @@ export class PhotometryWorkspace {
    */
   async loadDistribution(text, name, hints = {}) {
     if (this.app.active !== this) this.app.switchTo('photometry');
+    // A side the caller knows, such as the traced design's, stands; otherwise the file's cut-off decides it.
+    this.adoptTraffic = hints.traffic ? null : sourceKey({ ...this.doc, source: { name, text } });
     this.edit(`Open ${name}`, d => {
       d.source = { name, text };
       if (/^Untitled/.test(d.title)) d.title = name.replace(/\.(ies|ldt)$/i, '');
@@ -662,6 +736,12 @@ export class PhotometryWorkspace {
       { id: 'ph-pick-target', label: 'Pick a target on the beam', icon: 'pin', hint: 'Click the beam to add a target there', enabled: has, pressed: () => this.picking, run: () => { if (this.study !== 'targets') this.showStudy('targets'); this.togglePicking(); } },
       set('ph-aim-laboratory', 'As the laboratory aims it', 'fit', () => d().lamp.aim === 'laboratory', s => { s.lamp.aim = 'laboratory'; }, 'Each market aims the beam by its own method'),
       set('ph-aim-measured', 'As measured', 'pin', () => d().lamp.aim === 'measured', s => { s.lamp.aim = 'measured'; }, 'Take the file\'s own axis'),
+      ...(/** @type {('left' | 'right')[]} */ (['left', 'right'])).map(side => ({
+        id: `ph-lamp-${side}`, label: `Check the ${sideWord(side)} lamp`, icon: 'road', hint: 'For the market picked in the matrix',
+        enabled: () => { const l = this.market ? lampOf(d(), this.market.market) : null; return !!l && !l.system; },
+        pressed: () => !!this.market && lampSideOf(this.market.market) === side,
+        run: () => { if (this.market) this.setMarketLamp(this.market.market, side); },
+      })),
       set('ph-traffic-right', 'Made for right-hand traffic', 'road', () => d().lamp.traffic === 'right', s => { s.lamp.traffic = 'right'; }),
       set('ph-traffic-left', 'Made for left-hand traffic', 'road', () => d().lamp.traffic === 'left', s => { s.lamp.traffic = 'left'; }),
       set('ph-quantity-cd', 'Intensity', 'beam', () => d().display.beam.quantity === 'intensity', s => { s.display.beam.quantity = 'intensity'; s.display.beam.auto = 'yes'; s.display.beam.contours = headlamp(s) ? [100, 500, 1000, 5000, 10000, 20000, 40000, 80000] : [0.3, 1, 5, 20, 50, 100, 200, 500]; }, 'Show candela'),

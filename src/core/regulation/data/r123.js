@@ -308,8 +308,9 @@ const BENDING_NOTES = [
 
 /**
  * @typedef {{ id: string, name: string, kind: string, traffic: string, aim: string,
- *   aimRule: string, tolerance: null, requirements: any[], notes: string[] }} HeadlampFunction
+ *   aimRule: string, tolerance: null, requirements: any[], notes: string[], sideMeans?: 'system' }} HeadlampFunction
  *   kind is 'headlamp'; aimRule is one of 'r123-passing', 'keep-passing-aim', 'driving-max', 'keep-driving-aim'.
+ *   sideMeans 'system': the traffic side names the lamp's own system, used in the other traffic.
  *   requirements follow the shared kinds of src/core/regulation/engine.js.
  */
 
@@ -462,9 +463,11 @@ export const FUNCTIONS = [
   })),
   {
     id: 'traffic-change',
-    name: 'Traffic-change function (right-hand system used in left-hand traffic)',
+    name: 'Traffic-change function',
     kind: 'headlamp',
     traffic: 'right',
+    // The market's side names the lamp's system, used in the other traffic (§5.8.2.1 and §5.8.2.2, p. 16).
+    sideMeans: 'system',
     aim: 'Measured as in §6.2 with the adjustment left as it was for the original direction of traffic (§5.8.2, p. 16). '
       + 'Annex 8 does not apply to the traffic-change function (§6.2.1.2, p. 18).',
     aimRule: 'keep-passing-aim',

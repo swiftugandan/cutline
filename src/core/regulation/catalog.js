@@ -27,10 +27,12 @@ import { SOURCE as CMVSS_SOURCE, BASIS as CMVSS_BASIS, ALTERNATIVES as CMVSS_ALT
  *   A fact about the lamp that decides which requirements apply. Conditions in the same set exclude each other.
  * @typedef {{ id: string, name: string, roles: Role[], kind: 'headlamp' | 'signal', aimRule: AimRule, aimText: string,
  *   tolerance: number, requirements: Requirement[], notes: string[], beamClass?: 'C' | 'V' | 'B' | 'A', pointRule?: PointRule, between?: string,
- *   cutoffCites?: { sharpness: string, linearity: string, method: string } }} PackFunction
+ *   cutoffCites?: { sharpness: string, linearity: string, method: string }, sideMeans?: 'road' | 'system' }} PackFunction
  *   tolerance: degrees around each test point within which the most favourable value counts. beamClass: an R149
  *   function, evaluated by R149's own evaluator. pointRule and between: see MeasureOptions in engine.js. cutoffCites:
- *   where the text states the cut-off rules, for 'unece-cutoff'.
+ *   where the text states the cut-off rules, for 'unece-cutoff'. sideMeans: what a market's traffic side names; 'road' (the
+ *   default) the traffic the test points are drawn for, 'system' the lamp's own system, used in the other traffic, as in
+ *   a traffic-change function. A 'system' function always checks the lamp of that system.
  * @typedef {'official' | 'adopted' | 'incomplete'} Provenance
  * @typedef {{ id: string, title: string, short: string, region: string, provenance: Provenance, statement: string,
  *   source: { title: string, document: string, url: string }, traffics: ('right' | 'left')[], receiverDeg: number,
@@ -131,6 +133,7 @@ const R123 = {
       id: f.id, name: f.name, roles: driving ? ['driving'] : ['passing'], kind: 'headlamp', aimRule, aimText: f.aim, tolerance: toleranceOf(f), requirements: /** @type {Requirement[]} */ (f.requirements), notes: notesOf(f),
       // R123 aims its Class C passing beam exactly as R149 01 does (Annex 8 §2.3, §2.7, §3.1–3.2).
       cutoffCites: { sharpness: 'R123 Rev.2, Annex 8 §2.7.2 (p. 70)', linearity: 'R123 Rev.2, Annex 8 §2.7.3 (p. 70)', method: 'R123 Annex 8 §3.2' },
+      ...(f.sideMeans ? { sideMeans: f.sideMeans } : {}),
     };
   }),
   notes: ['Values apply to half the sum of both sides of the system unless a rule names one side (Annex 9 §1.8). Cutline treats the file as that half-sum.'],
@@ -277,8 +280,17 @@ export const conditionPack = pack => pack.basis ?? pack.id;
 export function functionsFor(pack, role) { return pack.functions.filter(f => f.roles.includes(role)); }
 
 /**
- * @typedef {{ pack: string, fn: string, traffic: 'right' | 'left' }} Market  One pack function under one traffic side.
+ * @typedef {'matching' | 'other'} MarketLamp  The lamp a headlamp market checks: the lamp for the traffic side of its
+ *   test points, or the lamp for the other side. Which of the file and its mirror image that is follows from the side
+ *   the study says the file is made for.
+ * @typedef {{ pack: string, fn: string, traffic: 'right' | 'left', lamp: MarketLamp }} Market  One pack function under
+ *   one traffic side, checked on one lamp.
  */
+
+/** The traffic side of the lamp a headlamp market checks. @param {Market} market @returns {'right' | 'left'} */
+export function lampSideOf(market) {
+  return market.lamp === 'other' ? (market.traffic === 'right' ? 'left' : 'right') : market.traffic;
+}
 
 /**
  * The markets a new study checks for a role: the most common function of every pack that serves it, under each
@@ -301,7 +313,7 @@ export function defaultMarkets(role) {
     if (!fns.length) continue;
     const fn = (preferred[pack.basis ?? pack.id] ?? []).map(id => fns.find(f => f.id === id)).find(Boolean) ?? fns[0];
     const traffics = isHeadlampRole(role) ? pack.traffics : /** @type {('right' | 'left')[]} */ (['right']);
-    for (const traffic of traffics) out.push({ pack: pack.id, fn: fn.id, traffic });
+    for (const traffic of traffics) out.push({ pack: pack.id, fn: fn.id, traffic, lamp: 'matching' });
   }
   return out;
 }

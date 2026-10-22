@@ -53,21 +53,22 @@ The loader also checks these, and refuses a design that breaks one:
 ## Photometry study
 
 A photometry study is one JSON document, downloaded as `.photometry.json` and described by
-[schema/cutline.photometry.v1.schema.json](../schema/cutline.photometry.v1.schema.json), generated from `STUDY_SPEC` in
+[schema/cutline.photometry.v2.schema.json](../schema/cutline.photometry.v2.schema.json), generated from `STUDY_SPEC` in
 `src/core/study.js`. It holds the light distribution file's text, so a study travels whole.
 
 | Field | Meaning |
 |---|---|
 | `source` | The file's name and its full text (IES or EULUMDAT, up to 256 MB) |
 | `mapping` | How the file's angles map to Cutline's frame: the photometry type (`"file"` takes the file's own), the Type C axis plane and direction, and a left–right mirror |
-| `lamp` | The lamp's role, the traffic side it is made for, how to treat the other side, which side is outwards for a signal lamp, the aim (laboratory or as measured, with shifts in degrees), R149's horizontal aiming method and the source flux |
+| `lamp` | The lamp's role, the traffic side the file is a lamp for, which side is outwards for a signal lamp, the aim (laboratory or as measured, with shifts in degrees), R149's horizontal aiming method and the source flux |
 | `conditions` | Facts declared about the lamp, as `"pack:condition"`, such as `"r148:low-mounting"` |
-| `markets` | The markets to check: a pack id, one of its function ids and a traffic side |
+| `markets` | The markets to check: a pack id, one of its function ids, the traffic side of its test points, and the lamp it checks (`"matching"`, the lamp for that side, or `"other"`, the lamp for the other side; the file is the lamp for the side it is made for, its mirror image the other) |
 | `targets` | The engineer's own requirements: a name, a point, line or area in degrees, a limit and its unit (cd, or lx at 25 m) |
 | `road` | Light on the road surface or on a target, which lamps, mounting height and spacing (m), aim (%), and the road's length and width (m) |
 | `display` | The beam and road pictures' colour scales: log or linear, fitted or fixed range, palette and contour levels; the beam's quantity (cd or lx at 25 m), colouring (light or uniformity), feature size and dark-patch depth |
 
 The loader also refuses a study whose markets name a pack, function or traffic side the catalogue does not hold, a
+traffic-change function checked on the other lamp, a
 target whose range has its minimum above its maximum, and a fixed colour scale whose top is not above its bottom (or
 whose bottom is not above zero on a log scale).
 
@@ -89,5 +90,10 @@ The loader also refuses a model whose forward and up axes are the same axis.
 ## Changing the formats
 
 Add or change fields only in the specs (`DESIGN_SPEC`, `STUDY_SPEC`, `VEHICLE_SPEC`), then run
-`node scripts/build-schema.mjs`. A test fails while a committed schema is out of date. The project has not been
-released, so there are no older versions to migrate.
+`node scripts/build-schema.mjs`. A test fails while a committed schema is out of date. A change that an older
+document cannot be read as goes with a new version number and a migration in the loader, so studies saved in a browser
+and files already downloaded keep opening:
+
+| Document | Version | Migration |
+|---|---|---|
+| Photometry study | 2 | Version 1 chose for the whole study whether a market for the other traffic side checked the file's mirror image or the file as it is (`lamp.otherTraffic`). Version 2 makes it each market's `lamp`; a version 1 study is migrated on opening and checks the same beams. |

@@ -130,7 +130,7 @@ Each workspace's document saves itself in your browser as you work. Browser stor
 | Workspace | File | Schema |
 |---|---|---|
 | Lamp design | `.cutline.json` | [cutline.design.v1](schema/cutline.design.v1.schema.json) |
-| Photometry | `.photometry.json`, with the light distribution inside | [cutline.photometry.v1](schema/cutline.photometry.v1.schema.json) |
+| Photometry | `.photometry.json`, with the light distribution inside | [cutline.photometry.v2](schema/cutline.photometry.v2.schema.json) |
 | Vehicle | `.vehicle.json`; the model file stays beside it | [cutline.vehicle.v1](schema/cutline.vehicle.v1.schema.json) |
 
 The lamp design also exports the compliance table and the aimed beam's candela table as CSV, and the traced beam as

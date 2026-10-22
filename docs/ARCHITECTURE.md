@@ -13,7 +13,7 @@ flowchart LR
     lamp["lamp.js, lamps/<br/>design → surfaces"]
     tracer["tracer.js, geometry.js,<br/>optics.js, spectrum.js"]
     dist["distribution/<br/>IES, EULUMDAT → histograms"]
-    analysis["analysis.js<br/>study-analysis.js"] --> regulation["regulation/<br/>engine, catalog, evaluate,<br/>r149.js, data/"]
+    analysis["analysis.js<br/>study-analysis.js, traffic-side.js"] --> regulation["regulation/<br/>engine, catalog, evaluate,<br/>r149.js, data/"]
     analysis --> road["road.js"]
     install["installation.js<br/>mesh/ (readers, BVH)"]
     uniformity["uniformity.js"]

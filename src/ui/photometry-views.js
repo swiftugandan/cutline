@@ -3,8 +3,11 @@
  * every edit goes back through callbacks that run a store transaction. */
 
 import { h, fmt } from './dom.js';
+import { hydrateIcons } from './icons.js';
 import { complianceView, formatValue, STATUS_TEXT } from './compliance-view.js';
-import { PACKS, ROLES, packById, functionsFor, isHeadlampRole, conditionPack } from '../core/regulation/catalog.js';
+import { PACKS, ROLES, packById, functionById, functionsFor, isHeadlampRole, conditionPack } from '../core/regulation/catalog.js';
+import { trafficNote, trafficVerdict } from './traffic-note.js';
+import { lampOf, lampName, sideShort, sideWord, testPointsName, pairSentence, lampChoice } from './market-lamp.js';
 
 /** @import { Study, Target } from '../core/study.js' */
 /** @import { StudyAnalysis, MarketResult } from '../core/study-analysis.js' */
@@ -32,9 +35,12 @@ export function marketCounts(r) {
   return { ...c, met: c.pass + c.near, judged: r.items.length - c.info };
 }
 
-/** A market's name: the pack, its function and the traffic side. @param {MarketResult | { pack: { short: string }, fn: { name: string }, market: Market }} r @param {boolean} headlamp */
+/** A market's name: the pack and the traffic side of its test points; for a traffic-change function, the lamp's system
+ * and the traffic it is used in. @param {MarketResult | { pack: { short: string }, fn: { name: string }, market: Market }} r @param {boolean} headlamp */
 export function marketName(r, headlamp) {
-  return `${r.pack.short}${headlamp ? `, ${r.market.traffic === 'right' ? 'RHT' : 'LHT'}` : ''}`;
+  if (!headlamp) return r.pack.short;
+  const t = r.market.traffic, short = t === 'right' ? 'RHT' : 'LHT';
+  return functionById(r.market.pack, r.market.fn)?.sideMeans === 'system' ? `${r.pack.short}, ${sideShort(t)} lamp in ${t === 'right' ? 'LHT' : 'RHT'}` : `${r.pack.short}, ${short}`;
 }
 
 /** @param {Provenance} p */
@@ -46,9 +52,10 @@ function provenanceBadge(p) {
 /**
  * @param {{ study: Study, analysis: StudyAnalysis | null, error: string | null, running: boolean, selected: string | null,
  *   picked: string | null, onPick: (key: string) => void, onSelect: (id: string | null) => void, onRemove: (index: number) => void,
- *   onAdd: () => void, onCondition: (packId: string, id: string, on: boolean, set?: string) => void, onReport: () => void }} props
+ *   onAdd: () => void, onCondition: (packId: string, id: string, on: boolean, set?: string) => void, onReport: () => void,
+ *   onLamp: (market: Market, side: 'right' | 'left') => void }} props
  */
-export function marketsView({ study, analysis, error, running, selected, picked, onPick, onSelect, onRemove, onAdd, onCondition, onReport }) {
+export function marketsView({ study, analysis, error, running, selected, picked, onPick, onSelect, onRemove, onAdd, onCondition, onReport, onLamp }) {
   const headlamp = isHeadlampRole(study.lamp.role);
   const tools = h('div', { class: 'dock-tools' }, [
     button('plus', 'Add a market', onAdd),
@@ -72,19 +79,20 @@ export function marketsView({ study, analysis, error, running, selected, picked,
     const row = h('tr', { class: 'req-row market-row', 'aria-selected': String(r.key === picked), tabindex: '0', 'data-key': r.key }, [
       h('td', {}, [h('span', { class: `verdict ${verdict}` }, [h('span', { 'data-icon': icon }), r.pass ? word : `${c.fail} failing`])]),
       h('td', { class: 'req-name' }, [h('span', { text: marketName(r, headlamp) }), h('small', { text: r.pack.region })]),
-      h('td', { class: 'req-name' }, [h('span', { text: r.fn.name }), h('small', { text: r.beam === 'mirror' ? 'Checked on the mirror image, the lamp for this traffic side' : r.aim.method })]),
+      headlamp ? h('td', {}, [lampSwitch(study, r, onLamp)]) : null,
+      h('td', { class: 'req-name' }, [h('span', { text: r.fn.name }), h('small', { text: r.aim.method })]),
       h('td', { class: 'req-value', text: `${c.met} of ${c.judged}` }),
       h('td', { class: 'req-limit' }, r.worst ? [h('span', { text: r.worst.label }), h('small', { class: 'margin-inline', text: ` ${formatMargin(r.worst.margin)}` })] : ['–']),
       h('td', {}, [provenanceBadge(r.pack.provenance)]),
       h('td', {}, [remove]),
     ]);
     row.addEventListener('click', () => onPick(r.key));
-    row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(r.key); } });
+    row.addEventListener('keydown', e => { if (e.target === row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onPick(r.key); } });
     return row;
   });
   const passing = analysis.markets.filter(r => r.pass).length;
   const matrix = h('table', { class: 'compliance markets' }, [
-    h('thead', {}, [h('tr', {}, ['Result', 'Market', 'Function', 'Met', 'Least headroom', 'Source', ''].map(text => h('th', { text, scope: 'col' })))]),
+    h('thead', {}, [h('tr', {}, ['Result', 'Market', ...(headlamp ? ['Lamp'] : []), 'Function', 'Met', 'Least headroom', 'Source', ''].map(text => h('th', { text, scope: 'col' })))]),
     h('tbody', {}, rows),
   ]);
   const summary = h('div', { class: `summary-banner ${passing === analysis.markets.length ? 'pass' : 'fail'}` }, [
@@ -121,7 +129,7 @@ export function marketsView({ study, analysis, error, running, selected, picked,
     evaluation: { beamClass: 'C', traffic: r.market.traffic, aim: r.aim, items: r.items, pass: r.pass, worst: r.worst, source: { title: r.pack.title, document: r.pack.source.document, url: r.pack.source.url } },
     peak: null, error: null, running, selected, onSelect, heading,
   });
-  return h('div', { class: 'dock-inner' }, [title, summary, h('div', { class: 'table-wrap' }, [matrix]), detail]);
+  return h('div', { class: 'dock-inner' }, [title, summary, trafficNote(study, analysis.traffic, { onlyMismatch: true }), h('div', { class: 'table-wrap' }, [matrix]), detail]);
 }
 
 /** A condition's text up to its first clause, for a checkbox label. @param {string} text */
@@ -138,26 +146,87 @@ function button(icon, text, run, disabled = false) {
 }
 
 /**
- * The add-a-market form: a pack, one of its functions for the lamp's role, and a traffic side.
+ * The lamp a market checks, as a switch between the left-hand and the right-hand lamp. The half that suits the test
+ * points is the usual choice; the other half is marked. A traffic-change function fixes its lamp, so it shows the lamp
+ * without a switch. Like the row's other controls, it shows its own market's state, so it is not a command button:
+ * the ph-lamp commands act on the picked market instead.
+ * @param {Study} study @param {MarketResult} r @param {(market: Market, side: 'right' | 'left') => void} onLamp
+ */
+function lampSwitch(study, r, onLamp) {
+  const l = lampOf(study, r.market);
+  if (!l) return h('span', { text: '–' });
+  if (l.system) return h('span', { class: 'lamp-fixed', text: sideShort(l.side), 'data-tip': `${testPointsName(r.market.traffic, true)}: the function fixes the lamp` });
+  const halves = /** @type {('left' | 'right')[]} */ (['left', 'right']).map(side => {
+    const mirrored = side !== study.lamp.traffic, crossed = side !== r.market.traffic;
+    const b = h('button', {
+      type: 'button', 'aria-pressed': String(side === l.side), text: sideShort(side),
+      'aria-label': `${lampName(side, mirrored)}${crossed ? `, on ${sideWord(r.market.traffic)} test points` : ''}`,
+      'data-tip': `${lampName(side, mirrored)}${crossed ? `. Checked on ${sideWord(r.market.traffic)} test points, which a lamp for the other side usually fails` : ''}`,
+    });
+    // The edit picks the market in its new form, so the row's own click must not pick it again in its old form.
+    b.addEventListener('click', e => { e.stopPropagation(); onLamp(r.market, side); });
+    b.addEventListener('keydown', e => e.stopPropagation());
+    return b;
+  });
+  return h('div', { class: 'lamp-cell' }, [
+    h('div', { class: 'segmented lamp-switch', role: 'group', 'aria-label': `Lamp checked for ${r.pack.short}, ${sideWord(r.market.traffic)} traffic` }, halves),
+    l.crossed ? h('span', { class: 'lamp-crossed', 'data-icon': 'alert', 'data-tip': pairSentence(study, r.market, r.pack.short) ?? '' }) : null,
+  ]);
+}
+
+/**
+ * The add-a-market form: a pack, one of its functions for the lamp's role, the side of its test points and, for a
+ * headlamp, the lamp to check on them. The lamp follows the test points until the engineer chooses one; a sentence
+ * below says what will be checked, in full.
  * @param {Study} study @returns {{ body: HTMLElement, value: () => Market | null }}
  */
 export function marketForm(study) {
   const role = study.lamp.role;
+  const headlamp = isHeadlampRole(role);
   const packs = PACKS.filter(p => functionsFor(p, role).length);
   const pack = h('select', { class: 'select', 'aria-label': 'Regulation' }, packs.map(p => h('option', { value: p.id, text: `${p.short}: ${p.region}` })));
   const fn = h('select', { class: 'select', 'aria-label': 'Function' });
-  const traffic = h('select', { class: 'select', 'aria-label': 'Traffic' });
+  const traffic = h('select', { class: 'select', 'aria-label': 'Test points' });
+  const lamp = h('select', { class: 'select', 'aria-label': 'Lamp' });
+  const preview = h('p', { class: 'aim-note subtle market-preview' });
+  /** The lamp the engineer chose, or null while it follows the test points. @type {'right' | 'left' | null} */
+  let chosen = null;
+  const system = () => packById(pack.value)?.functions.find(f => f.id === fn.value)?.sideMeans === 'system';
+  /** @returns {Market | null} */
+  const market = () => {
+    if (!pack.value || !fn.value || !traffic.value) return null;
+    const side = /** @type {'right' | 'left'} */ (traffic.value);
+    const lampSide = headlamp && !system() ? /** @type {'right' | 'left'} */ (lamp.value || side) : side;
+    return { pack: pack.value, fn: fn.value, traffic: side, lamp: lampChoice(lampSide, side) };
+  };
+  const show = () => {
+    const sys = system(), side = /** @type {'right' | 'left'} */ (traffic.value);
+    for (const o of traffic.options) o.text = testPointsName(/** @type {'right' | 'left'} */ (o.value), sys);
+    lampField.hidden = !headlamp || sys;
+    if (!chosen && side) lamp.value = side;
+    const m = market(), p = packById(pack.value);
+    const sentence = m && p ? pairSentence(study, m, p.short) : null;
+    preview.hidden = !sentence;
+    preview.replaceChildren(h('span', { 'data-icon': 'info' }), h('span', { text: sentence ?? '' }));
+    hydrateIcons(preview);
+  };
   const refill = () => {
     const p = packById(pack.value);
     fn.replaceChildren(...(p ? functionsFor(p, role) : []).map(f => h('option', { value: f.id, text: f.name })));
-    traffic.replaceChildren(...(p?.traffics ?? []).map(t => h('option', { value: t, text: t === 'right' ? 'Right-hand traffic' : 'Left-hand traffic' })));
+    traffic.replaceChildren(...(p?.traffics ?? []).map(t => h('option', { value: t })));
+    show();
   };
+  lamp.replaceChildren(.../** @type {('left' | 'right')[]} */ (['left', 'right']).map(side => h('option', { value: side, text: lampName(side, side !== study.lamp.traffic) })));
   pack.addEventListener('change', refill);
-  refill();
+  fn.addEventListener('change', show);
+  traffic.addEventListener('change', show);
+  lamp.addEventListener('change', () => { chosen = /** @type {'right' | 'left'} */ (lamp.value); show(); });
   const field = (/** @type {string} */ label, /** @type {HTMLElement} */ input) => h('label', { class: 'field' }, [h('span', { class: 'field-label', text: label }), input]);
+  const lampField = field('Lamp', lamp);
+  refill();
   return {
-    body: h('div', { class: 'form-grid' }, [field('Regulation', pack), field('Function', fn), field('Traffic', traffic)]),
-    value: () => (pack.value && fn.value && traffic.value ? { pack: pack.value, fn: fn.value, traffic: /** @type {'right' | 'left'} */ (traffic.value) } : null),
+    body: h('div', { class: 'form-grid' }, [field('Regulation', pack), field('Function', fn), field(headlamp ? 'Test points' : 'Traffic', traffic), lampField, headlamp ? preview : null]),
+    value: market,
   };
 }
 
@@ -310,6 +379,7 @@ export function fileView({ study, analysis, error }) {
   if (!analysis) return h('div', { class: 'dock-inner' }, [title, h('div', { class: 'empty-state' }, [h('strong', { text: 'No light distribution yet' }), 'Open an IES (LM-63) or EULUMDAT (.ldt) file.'])]);
   const f = analysis.file;
   const cov = f.coverage;
+  const traffic = trafficVerdict(study, analysis.traffic);
   /** @type {[string, string][]} */
   const facts = [
     ['Format', `${f.format}, photometry Type ${f.type}`],
@@ -317,6 +387,7 @@ export function fileView({ study, analysis, error }) {
     ['Values', `${fmt(f.values, 0)} (${f.type === 'C' ? 'C' : 'H'} ${fmt(f.horizontal[0], 1)}° to ${fmt(f.horizontal[1], 1)}°, ${f.type === 'C' ? 'γ' : 'V'} ${fmt(f.vertical[0], 1)}° to ${fmt(f.vertical[1], 1)}°)`],
     ['Finest step', `${fmt(f.resolution[0], 2)}° across, ${fmt(f.resolution[1], 2)}° up`],
     ['Covers', cov ? `${fmt(Math.abs(cov.hMin), 1)}°L to ${fmt(cov.hMax, 1)}°R, ${fmt(Math.abs(cov.vMin), 1)}°D to ${fmt(cov.vMax, 1)}°U` : 'Nothing ahead of the lamp'],
+    ...(traffic ? [/** @type {[string, string]} */ (['Traffic side', traffic.fact])] : []),
     ['Peak in the file', `${fmt(f.peak, 0)} cd`],
     ['Flux ahead of the lamp', `${fmt(f.lumensForward, 0)} lm`],
     ['Lamp flux in the file', f.lampLumens ? `${fmt(f.lampLumens, 0)} lm` : 'Not given (absolute photometry)'],

@@ -5,12 +5,13 @@
 import { parseDistribution, intensityFunction, toHistograms, describe, FILE_GRIDS } from './distribution/distribution.js';
 import { Beam, evaluateBeam, aimR149, verticalScan } from './regulation/evaluate.js';
 import { measureRequirements, applicable, meets, weakest, status } from './regulation/engine.js';
-import { packById, functionById, isHeadlampRole, conditionPack } from './regulation/catalog.js';
+import { packById, functionById, isHeadlampRole, conditionPack, lampSideOf } from './regulation/catalog.js';
 import { AIMING as FMVSS_AIMING } from './regulation/data/fmvss108-headlamps.js';
 import { RULES } from './regulation/r149.js';
 import { roadIlluminance } from './road.js';
 import { gridSize } from './tracer.js';
 import { binSolidAngle, SCREEN_DISTANCE } from './photometry.js';
+import { readTrafficSide } from './traffic-side.js';
 
 /** @import { Study, Target } from './study.js' */
 /** @import { Histogram } from './types.js' */
@@ -19,6 +20,7 @@ import { binSolidAngle, SCREEN_DISTANCE } from './photometry.js';
 /** @import { Aim } from './regulation/evaluate.js' */
 /** @import { RoadResult } from './road.js' */
 /** @import { CandelaLayer } from './analysis.js' */
+/** @import { TrafficReading } from './traffic-side.js' */
 
 /**
  * @typedef {'file' | 'mirror'} BeamKey  The file as it is, or its mirror image (the lamp for the other traffic side).
@@ -26,12 +28,14 @@ import { binSolidAngle, SCREEN_DISTANCE } from './photometry.js';
  *   fn: { id: string, name: string, aimText: string, notes: string[] }, beam: BeamKey, aim: Aim, items: Item[], pass: boolean, worst: Item | null }} MarketResult
  * @typedef {{ file: ReturnType<typeof describe>, layers: Partial<Record<BeamKey, CandelaLayer[]>>, markets: MarketResult[],
  *   reference: { beam: BeamKey, aim: Aim, label: string, lift: number }, targets: Item[], road: RoadResult | null,
- *   peak: { value: number, h: number, v: number } }} StudyAnalysis
+ *   peak: { value: number, h: number, v: number }, traffic: TrafficReading | null }} StudyAnalysis
  *   layers are candela per bin in the file's own frame (NaN outside the file); the page moves them by a market's aim.
  *   reference: the frame the pictures, the targets and the road use, the first market's aim. lift: degrees the beam is
- *   raised on the road so a laboratory-aimed cut-off sits level before the vehicle's own aim.
- * @typedef {{ key: string, histograms: Partial<Record<BeamKey, Histogram[]>>, description: ReturnType<typeof describe>, mirror?: () => Histogram[] }} StudyCache
- *   mirror resamples the file's mirror image, on first need.
+ *   raised on the road so a laboratory-aimed cut-off sits level before the vehicle's own aim. traffic: the traffic side
+ *   the file's cut-off shows, read on the file as Cutline reads it (after the mapping), for a passing beam only.
+ * @typedef {{ key: string, histograms: Partial<Record<BeamKey, Histogram[]>>, description: ReturnType<typeof describe>, mirror?: () => Histogram[],
+ *   traffic?: TrafficReading }} StudyCache
+ *   mirror resamples the file's mirror image, on first need. traffic is read on first need, and kept with the file.
  */
 
 /** A key that changes whenever the file or its mapping does. @param {Study} s */
@@ -59,9 +63,10 @@ export function prepare(study, cache, needMirror) {
   return c;
 }
 
-/** The beam a market reads: the lamp for the other traffic side is the file's mirror image, unless told otherwise. @param {Study} study @param {Market} market @returns {BeamKey} */
+/** The beam a market reads: the file is the lamp for the side it is made for, and its mirror image the lamp for the
+ * other side. A signal lamp has no traffic side, and is read as it is. @param {Study} study @param {Market} market @returns {BeamKey} */
 export function beamKeyFor(study, market) {
-  return isHeadlampRole(study.lamp.role) && market.traffic !== study.lamp.traffic && study.lamp.otherTraffic === 'mirror' ? 'mirror' : 'file';
+  return isHeadlampRole(study.lamp.role) && lampSideOf(market) !== study.lamp.traffic ? 'mirror' : 'file';
 }
 
 /** The study's conditions that belong to a pack, without the prefix. An adopted pack shares its basis's conditions.
@@ -172,13 +177,14 @@ export function analyseStudy(study, cache) {
   const c = prepare(study, cache, needMirror);
   /** @param {BeamKey} key */
   const beamOf = key => new Beam(/** @type {Histogram[]} */ (c.histograms[key]), 'goniometer', { exact: true });
+  if (study.lamp.role === 'passing' && !c.traffic) c.traffic = readTrafficSide(beamOf('file'), c.description.resolution[1]);
   /** @type {MarketResult[]} */
   const results = markets.map(market => {
     const pack = /** @type {Pack} */ (packById(market.pack)), fn = /** @type {PackFunction} */ (functionById(market.pack, market.fn));
     const key = beamKeyFor(study, market);
     const { aim, items } = evaluateFunction(beamOf(key), study, market, pack, fn);
     return {
-      market, key: `${market.pack}:${market.fn}:${market.traffic}`,
+      market, key: `${market.pack}:${market.fn}:${market.traffic}:${market.lamp}`,
       pack: { id: pack.id, title: pack.title, short: pack.short, provenance: pack.provenance, statement: pack.statement, region: pack.region, notes: pack.notes, source: pack.source },
       fn: { id: fn.id, name: fn.name, aimText: fn.aimText, notes: fn.notes },
       beam: key, aim, items, pass: meets(items), worst: weakest(items),
@@ -201,5 +207,5 @@ export function analyseStudy(study, cache) {
   /** @type {Partial<Record<BeamKey, CandelaLayer[]>>} */
   const layers = {};
   for (const key of /** @type {BeamKey[]} */ (['file', 'mirror'])) { const h = c.histograms[key]; if (h) layers[key] = fileLayers(h); }
-  return { analysis: { file: c.description, layers, markets: results, reference: { ...reference, lift }, targets, road, peak }, cache: c };
+  return { analysis: { file: c.description, layers, markets: results, reference: { ...reference, lift }, targets, road, peak, traffic: study.lamp.role === 'passing' ? c.traffic ?? null : null }, cache: c };
 }
